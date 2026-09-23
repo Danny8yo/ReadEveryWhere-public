@@ -27,14 +27,12 @@
 
 <img src="docs/images/annotationSync.gif" width="800">
 
-**AI 阅读** —— 书内关键词检索、证据引用与选区问答
+**RAG 问答** —— 书内关键词检索、证据引用与选区问答
+<video controls width="100%">
+  <source src="./docs/images/ask-question.mp4" type="video/mp4">
+  您的浏览器不支持视频标签。
+</video>
 
-## 代码结构
-
-- `frontend/src/`：Vue 页面、阅读器及业务功能
-- `backend/myapp/`：NestJS 模块、SQLite 持久化、HTTP 接口与测试
-- `backend/reader-tools-mcp/`：本地阅读工具适配器
-- `packages/epub-core/`：共享 EPUB 核心
 - [`docs/接口文档/`](docs/接口文档/README.md)：对外 HTTP 契约
 
 ## 公开版本边界
