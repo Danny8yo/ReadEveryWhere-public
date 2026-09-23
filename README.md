@@ -28,10 +28,10 @@
 <img src="docs/images/annotationSync.gif" width="800">
 
 **RAG 问答** —— 书内关键词检索、证据引用与选区问答
-<video controls width="100%">
-  <source src="./docs/images/ask-question.mp4" type="video/mp4">
-  您的浏览器不支持视频标签。
-</video>
+
+https://github.com/user-attachments/assets/88f98091-c3c5-420b-ac7e-7b040202cb24
+
+---
 
 - [`docs/接口文档/`](docs/接口文档/README.md)：对外 HTTP 契约
 
