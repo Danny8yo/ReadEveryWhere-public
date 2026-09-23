@@ -9,7 +9,25 @@
 - 基于服务端会话与 HttpOnly Cookie 的网页登录
 - AI 阅读任务，以及基于书内关键词检索和可回放证据的选区问答
 
-![书库界面](docs/images/metadata.png)
+## 功能演示
+
+**书库** —— 元数据刮削与批量校对
+
+<img src="docs/images/metadata.png" width="800">
+
+**阅读器** —— EPUB / PDF 阅读与批注
+
+<img src="docs/images/reader-pdf-annotation.png" width="800">
+
+**书籍采集** —— 书源搜索
+
+<img src="docs/images/search.png" width="800">
+
+**批注与进度** —— 跨端同步
+
+<img src="docs/images/annotationSync.gif" width="800">
+
+**AI 阅读** —— 书内关键词检索、证据引用与选区问答
 
 ## 代码结构
 
