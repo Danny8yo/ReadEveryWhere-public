@@ -1,0 +1,11 @@
+import type { BookDocument, ContentRevision } from "../../domain/book-document.types";
+
+export interface BookDocumentExtractorPort {
+  readonly extractorVersion: string;
+  readonly normalizationVersion: string;
+  extract(bookId: number, buffer: Buffer, revision: ContentRevision): Promise<BookDocument>;
+}
+
+export const BOOK_DOCUMENT_EXTRACTOR_PORT = Symbol(
+  "INTELLIGENT_LIBRARY_BOOK_DOCUMENT_EXTRACTOR_PORT",
+);

@@ -1,0 +1,51 @@
+// @vitest-environment happy-dom
+import { flushPromises, mount } from '@vue/test-utils';
+import { expect, it, vi } from 'vitest';
+const mocks = vi.hoisted(() => ({ getSession: vi.fn(), clearCache: vi.fn(), mountedUsers: [] as number[] }));
+vi.mock('../features/auth/api/authApi', () => ({ getSession: mocks.getSession, loginRemote: vi.fn(), registerRemote: vi.fn(), resetPasswordApi: vi.fn(), logoutApi: vi.fn() }));
+vi.mock('../features/library/api/librarySyncApi', () => ({openLibraryStream:()=>()=>{}, getLibrarySyncState:vi.fn()}));
+vi.mock('../services/bookFileCache', () => ({ clearBookFileCacheForUser: mocks.clearCache }));
+vi.mock('../views/LibraryView.vue', async () => {
+  const { defineComponent, h } = await import('vue');
+  const { useAuth } = await import('../composables/useAuth');
+  return { default: defineComponent({ setup() {
+    const id = useAuth().user.value!.userId;
+    mocks.mountedUsers.push(id);
+    return () => h('p', { 'data-testid': 'library-owner' }, String(id));
+  } }) };
+});
+vi.mock('../views/SearchView.vue', () => ({ default: { template: '<div />' } }));
+vi.mock('../views/SettingsView.vue', () => ({ default: { template: '<div />' } }));
+vi.mock('../views/LoginView.vue', () => ({ default: { template: '<div />' } }));
+vi.mock('../components/BookReader.vue', () => ({ default: { template: '<div />' } }));
+it('remounts user-owned pages when focus discovers another account or backend without a storage event', async () => {
+  const values = new Map<string,string>([['readEveryWhere.backendBaseUrl', 'http://localhost:3000']]);
+  vi.stubGlobal('localStorage', { getItem: (key: string) => values.get(key) ?? null, setItem: (key: string, value: string) => values.set(key,value), removeItem: (key: string) => values.delete(key) });
+  mocks.getSession.mockResolvedValueOnce({ user: { userId: 1, email: 'first@example.test' } });
+  const App = (await import('../App.vue')).default;
+  const wrapper = mount(App);
+  await flushPromises();
+  expect(wrapper.get('[data-testid="library-owner"]').text()).toBe('1');
+  const api = await import('../services/apiClient');
+  let finishOldRequest!: (response: Response) => void;
+  vi.stubGlobal('fetch', vi.fn(() => new Promise<Response>(resolve => { finishOldRequest = resolve; })));
+  const oldRequest = api.fetchWithAuth('/api/v1/library/books');
+  const oldVersion = api.getSessionVersion();
+  mocks.getSession.mockResolvedValueOnce({ user: { userId: 2, email: 'second@example.test' } });
+  window.dispatchEvent(new Event('focus'));
+  await flushPromises();
+  expect(wrapper.get('[data-testid="library-owner"]').text()).toBe('2');
+  expect(mocks.mountedUsers).toEqual([1, 2]);
+  expect(api.getSessionVersion()).not.toBe(oldVersion);
+  finishOldRequest(new Response('', { status: 401 }));
+  await oldRequest;
+  await flushPromises();
+  expect(wrapper.get('[data-testid="library-owner"]').text()).toBe('2');
+  localStorage.setItem('readEveryWhere.backendBaseUrl', 'http://localhost:4000');
+  mocks.getSession.mockResolvedValueOnce({ user: { userId: 2, email: 'third@example.test' } });
+  window.dispatchEvent(new Event('online'));
+  await flushPromises();
+  expect(mocks.mountedUsers).toEqual([1, 2, 2]);
+  wrapper.unmount();
+  vi.unstubAllGlobals();
+});

@@ -1,0 +1,24 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "lib": [
+      "ES2022",
+      "DOM"
+    ],
+    "types": [
+      "node"
+    ],
+    "strict": true,
+    "noEmit": true,
+    "skipLibCheck": true,
+    "ignoreDeprecations": "6.0"
+  },
+  "include": [
+    "playwright.selection-qa.config.ts",
+    "e2e/selection-qa/**/*.ts",
+    "playwright.selection-qa-live.config.ts",
+    "e2e/selection-qa-live/**/*.ts"
+  ]
+}

@@ -1,0 +1,19 @@
+# 后端使用仓库根上下文，仅允许后端工程与共享 EPUB 包进入构建。
+**
+!backend/
+!backend/myapp/
+!backend/myapp/**
+!packages/
+!packages/epub-core/
+!packages/epub-core/**
+**/node_modules
+**/dist
+**/*.tsbuildinfo
+**/.env
+**/.env.*
+**/data
+**/reports
+**/test-results
+**/playwright-report
+**/*.log
+**/.DS_Store

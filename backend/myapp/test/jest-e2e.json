@@ -1,0 +1,25 @@
+{
+  "moduleFileExtensions": [
+    "js",
+    "json",
+    "ts"
+  ],
+  "rootDir": "..",
+  "testRegex": "test/.*\\.e2e-spec\\.ts$",
+  "testTimeout": 30000,
+  "transform": {
+    "^.+\\.(t|j)s$": "ts-jest"
+  },
+  "setupFiles": [
+    "<rootDir>/test/setup-e2e.ts"
+  ],
+  "setupFilesAfterEnv": [
+    "<rootDir>/test/setup-storage.ts"
+  ],
+  "testEnvironment": "node",
+  "moduleNameMapper": {
+    "^@readeverywhere/epub-core$": "<rootDir>/test/epub-core-native.cjs",
+    "^@readeverywhere/epub-core/node$": "<rootDir>/test/epub-core-node-native.cjs",
+    "^@readeverywhere/epub-core/keywords$": "<rootDir>/test/epub-core-keywords-native.cjs"
+  }
+}

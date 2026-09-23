@@ -1,0 +1,8 @@
+{
+  "compilerOptions": {
+    "noEmit": true, "strict": true, "skipLibCheck": false,
+    "target": "ES2023", "lib": ["ES2023"], "module": "NodeNext", "moduleResolution": "NodeNext",
+    "types": ["node"], "typeRoots": ["../../backend/myapp/node_modules/@types"]
+  },
+  "include": ["test/typecheck-node.ts"]
+}

@@ -1,0 +1,46 @@
+import type { BookAnalysisSummary, FormalBookReadingProfile } from '../../features/metadata/model/bookAnalysis';
+import type { EbookFormat } from '../../utils/bookFormat';
+export interface BookDetailModel {
+    id: string;
+    sourceBookId: string;
+    sourcePlatform: string;
+    title: string;
+    authors: string[];
+    publisher: string | null;
+    publishYear: number | null;
+    identifier: string | null;
+    isbn?: string | null;
+    language: string | null;
+    formats: EbookFormat[];
+    fileSize: number | null;
+    fileSizeText: string | null;
+    coverUrl: string | null;
+    description: string | null;
+    downloadPath: string | null;
+    detailUrl: string | null;
+    readOnlineUrl: string | null;
+    readOnlineAvailable: boolean;
+    downloadable: boolean;
+    availability: 'available' | 'unavailable';
+    md5: string | null;
+    sha256: string | null;
+    zlibraryInterestScore: number | null;
+    zlibraryQualityScore: number | null;
+    doubanRating?: {
+        sourcePlatform: 'douban';
+        sourceBookId: string;
+        sourceUrl: string;
+        title: string | null;
+        authors: string[];
+        publisher: string | null;
+        publishYear: number | null;
+        isbn: string | null;
+        rating: number | null;
+        ratingCount: number | null;
+        fetchedAt?: string;
+    } | null;
+    raw: Record<string, unknown> | null;
+    hash?: string | null;
+    bookAnalysis?: BookAnalysisSummary | null;
+    readingProfile?: FormalBookReadingProfile;
+}

@@ -1,0 +1,43 @@
+import type { BookAnalysisSummary, FormalBookReadingProfile } from '../../metadata/model/bookAnalysis';
+import type { EbookFormat } from '../../../utils/bookFormat';
+export interface LibraryBookDto {
+    id: number;
+    userId: number;
+    title: string;
+    authors: string[];
+    authorsText: string;
+    isbn: string | null;
+    language: string | null;
+    coverUrl: string | null;
+    description: string | null;
+    publisher: string | null;
+    sourcePlatform: string;
+    sourceBookId: string | null;
+    sourceUrl: string | null;
+    publishYear: number | null;
+    editionTag: string | null;
+    version: number;
+    createdAt: string;
+    updatedAt: string;
+    fileName?: string | null;
+    fileSize: number | null;
+    isDownloaded: boolean;
+    fileUrl?: string | null;
+    checksum?: string | null;
+    mimeType?: string | null;
+    format: EbookFormat | null;
+    downloadStatus?: string | null;
+    downloadProgress?: number | null;
+    downloadTaskId?: number | null;
+    bookAnalysis?: BookAnalysisSummary | null;
+    readingProfile?: FormalBookReadingProfile;
+    doubanRating: {
+        sourcePlatform: 'douban';
+        sourceBookId: string;
+        sourceUrl: string;
+        title: string | null;
+        rating: number | null;
+        ratingCount: number | null;
+        fetchedAt: string;
+    } | null;
+}

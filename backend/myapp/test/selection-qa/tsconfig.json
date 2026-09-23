@@ -1,0 +1,6 @@
+{
+  "extends": "../../tsconfig.json",
+  "compilerOptions": {"rootDir": "../..", "noEmit": true, "declaration": false, "incremental": false},
+  "include": ["./*.ts", "../selection-qa.e2e-spec.ts", "../compat-e2e.helper.ts", "../../src/**/*.d.ts"],
+  "exclude": ["../../node_modules", "../../dist"]
+}

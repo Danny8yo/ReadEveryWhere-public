@@ -1,0 +1,50 @@
+# === 依赖与构建产物 ===
+**/node_modules/
+**/dist/
+**/build/
+**/coverage/
+**/*.tsbuildinfo
+
+# === 机密凭据（绝不入库）===
+.env
+.env.local
+.env.*.local
+**/.env
+**/.env.local
+!**/.env.example
+*.pem
+*.key
+*.crt
+*.p12
+
+# === 运行时真实数据（SQLite 库、下载文件、备份、调试日志）===
+backend/myapp/data/
+data/
+*.sqlite
+*.sqlite-shm
+*.sqlite-wal
+
+# === 版权内容（本地书库素材）===
+testbook/
+
+# === 测试与 e2e 产物 ===
+**/test-results/
+**/playwright-report/
+**/playwright/.cache/
+
+# === 编辑器 / 工具 / 系统 ===
+.DS_Store
+.idea/
+.vscode/
+.claude/
+.codex/
+.gstack/
+.traces/
+.superpowers/
+.worktrees/
+.mcp.json
+__pycache__/
+*.py[cod]
+*.log
+
+*.pdf

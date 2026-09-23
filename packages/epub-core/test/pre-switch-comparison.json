@@ -1,0 +1,184 @@
+[
+  {
+    "id": "single-section",
+    "passed": true,
+    "textChanged": true,
+    "oldChars": 13,
+    "newChars": 11
+  },
+  {
+    "id": "fragment-sections",
+    "passed": true,
+    "textChanged": true,
+    "oldChars": 24,
+    "newChars": 19
+  },
+  {
+    "id": "flat-unlabelled-headings",
+    "passed": true,
+    "textChanged": true,
+    "oldChars": 38,
+    "newChars": 29
+  },
+  {
+    "id": "heading-descendant-fragment",
+    "passed": true,
+    "textChanged": true,
+    "oldChars": 16,
+    "newChars": 13
+  },
+  {
+    "id": "declared-nesting-wins",
+    "passed": true,
+    "textChanged": true,
+    "oldChars": 20,
+    "newChars": 17
+  },
+  {
+    "id": "same-level-headings",
+    "passed": true,
+    "textChanged": true,
+    "oldChars": 22,
+    "newChars": 17
+  },
+  {
+    "id": "unmapped-clears-stack",
+    "passed": true,
+    "textChanged": true,
+    "oldChars": 24,
+    "newChars": 20
+  },
+  {
+    "id": "duplicate-heading-label",
+    "passed": true,
+    "textChanged": true,
+    "oldChars": 20,
+    "newChars": 16
+  },
+  {
+    "id": "cross-xhtml-headings",
+    "passed": true,
+    "textChanged": true,
+    "oldChars": 12,
+    "newChars": 10
+  },
+  {
+    "id": "heading-level-jump",
+    "passed": true,
+    "textChanged": true,
+    "oldChars": 21,
+    "newChars": 16
+  },
+  {
+    "id": "read-boundary-tree",
+    "passed": true,
+    "textChanged": true,
+    "oldChars": 2265,
+    "newChars": 2260
+  },
+  {
+    "id": "numbering-without-headings",
+    "passed": true,
+    "textChanged": true,
+    "oldChars": 20,
+    "newChars": 17
+  },
+  {
+    "id": "tree-limit",
+    "passed": true,
+    "textChanged": true,
+    "oldChars": 3199,
+    "newChars": 2798
+  },
+  {
+    "id": "spanning-node",
+    "passed": true,
+    "textChanged": true,
+    "oldChars": 22,
+    "newChars": 20
+  },
+  {
+    "id": "parent-intro",
+    "passed": true,
+    "textChanged": true,
+    "oldChars": 21,
+    "newChars": 18
+  },
+  {
+    "id": "deep-toc",
+    "passed": true,
+    "textChanged": true,
+    "oldChars": 22,
+    "newChars": 17
+  },
+  {
+    "id": "duplicate-fragment",
+    "passed": true,
+    "textChanged": true,
+    "oldChars": 9,
+    "newChars": 8
+  },
+  {
+    "id": "missing-anchor",
+    "passed": true,
+    "textChanged": true,
+    "oldChars": 7,
+    "newChars": 6
+  },
+  {
+    "id": "out-of-order-anchor",
+    "passed": true,
+    "textChanged": true,
+    "oldChars": 12,
+    "newChars": 9
+  },
+  {
+    "id": "ncx-nav-conflict",
+    "passed": true,
+    "textChanged": true,
+    "oldChars": 9,
+    "newChars": 8
+  },
+  {
+    "id": "spine-fallback",
+    "passed": true,
+    "textChanged": true,
+    "oldChars": 12,
+    "newChars": 10
+  },
+  {
+    "id": "media-footnote",
+    "passed": true,
+    "textChanged": true,
+    "oldChars": 21,
+    "newChars": 20
+  },
+  {
+    "id": "normalization",
+    "passed": true,
+    "textChanged": true,
+    "oldChars": 27,
+    "newChars": 27
+  },
+  {
+    "id": "large-leaf",
+    "passed": true,
+    "textChanged": true,
+    "oldChars": 50404,
+    "newChars": 50403
+  },
+  {
+    "id": "next-section-zero",
+    "passed": true,
+    "textChanged": true,
+    "oldChars": 14,
+    "newChars": 12
+  },
+  {
+    "id": "tiny-adjacent",
+    "passed": true,
+    "textChanged": false,
+    "oldChars": 4,
+    "newChars": 4
+  }
+]

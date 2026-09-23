@@ -1,0 +1,11 @@
+@import "tailwindcss";
+
+:root {
+  color-scheme: light;
+}
+
+/* 手机竖屏应用壳：保留原桌面布局，覆盖动态视口与系统安全区。 */
+@media (max-width: 640px) {
+  .book-reader { height: 100dvh; }
+  .book-reader footer { padding-bottom: max(0.5rem, env(safe-area-inset-bottom)); }
+}

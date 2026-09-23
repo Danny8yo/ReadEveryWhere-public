@@ -1,0 +1,48 @@
+{
+  "name": "@readeverywhere/epub-core",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": {
+      "types": "./src/index.d.ts",
+      "default": "./src/index.js"
+    },
+    "./types": {
+      "types": "./src/types.d.ts",
+      "default": "./src/types.js"
+    },
+    "./node": {
+      "types": "./src/node.d.ts",
+      "default": "./src/node.js"
+    },
+    "./foliate/*": "./src/foliate/*",
+    "./decode": {
+      "types": "./src/decode.d.ts",
+      "default": "./src/decode.js"
+    },
+    "./keywords": {
+      "types": "./src/keywords.d.ts",
+      "default": "./src/keywords.js"
+    }
+  },
+  "scripts": {
+    "test": "node --test test/*.test.mjs",
+    "verify:hosts": "node test/compare-hosts.mjs",
+    "benchmark": "node test/benchmark.mjs",
+    "fixtures": "node test/write-fixtures.mjs",
+    "capture:baseline": "node test/capture-baseline.mjs",
+    "verify:documents": "node test/compare-book-documents.mjs",
+    "typecheck": "node ../../backend/myapp/node_modules/typescript/bin/tsc -p tsconfig.node.json"
+  },
+  "files": [
+    "src",
+    "README.md",
+    "THIRD_PARTY.md",
+    "LICENSE.foliate"
+  ],
+  "dependencies": {
+    "adm-zip": "0.6.0",
+    "jsdom": "26.1.0"
+  }
+}
