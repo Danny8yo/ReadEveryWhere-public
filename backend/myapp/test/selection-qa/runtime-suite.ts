@@ -272,7 +272,7 @@ describe("selection QA real Nest, SQLite and EPUB (isolated)", () => {
         )
         .get(bookId)!.n,
     ).toBe(1);
-    expect(model.calls.filter((c) => c.kind === "complete")).toHaveLength(2);
+    expect(model.calls.filter((c) => c.kind === "complete")).toHaveLength(3);
     const events = await qaRequest(
       app,
       auth.sessionCookie,
@@ -400,7 +400,7 @@ describe("selection QA real Nest, SQLite and EPUB (isolated)", () => {
     const { conversation, turn } = response.body.data;
     const stream = await fetch(
       `${await app.getUrl()}/api/v1/selection-qa/turns/${turn.id}/events`,
-      { headers: sessionHeaders(auth.sessionCookie) },
+      { headers: { ...sessionHeaders(auth.sessionCookie), "X-Selection-QA-Protocol": "2" } },
     );
     expect(stream.status).toBe(200);
     const reader = stream.body!.getReader();
@@ -456,10 +456,11 @@ describe("selection QA real Nest, SQLite and EPUB (isolated)", () => {
       })
       .expect(201);
     const { conversation, turn } = created.body.data;
-    await waitForTurn(app, auth.sessionCookie, conversation.id, turn.id);
+    const applicable = await waitForTurn(app, auth.sessionCookie, conversation.id, turn.id);
     const create = {
       commandId: randomUUID(),
       appendText: "人工预览确认的答复",
+      answerVersion: applicable.answerVersion,
       target: {
         kind: "create",
         annotationType: "highlight",
@@ -479,6 +480,7 @@ describe("selection QA real Nest, SQLite and EPUB (isolated)", () => {
     const append = {
       commandId: randomUUID(),
       appendText: "第二段确认文字",
+      answerVersion: applicable.answerVersion,
       target: {
         kind: "append",
         annotationId: annotation.id,
@@ -522,7 +524,7 @@ describe("selection QA real Nest, SQLite and EPUB (isolated)", () => {
     );
   });
 
-  it("uses four model calls on the normal two-search path including final streaming", async () => {
+  it("uses five model calls on the normal two-search path including streaming and checking", async () => {
     const { app, auth, bookId, selection } = fixture;
     model.use({
       plans: Array.from({ length: 2 }, (_, i) => [
@@ -555,6 +557,7 @@ describe("selection QA real Nest, SQLite and EPUB (isolated)", () => {
       "complete",
       "complete",
       "stream",
+      "complete",
     ]);
     expect(
       app
@@ -562,7 +565,7 @@ describe("selection QA real Nest, SQLite and EPUB (isolated)", () => {
         .getDatabase()
         .prepare("SELECT model_call_count FROM selection_qa_turns WHERE id=?")
         .get(turn.id)!.model_call_count,
-    ).toBe(4);
+    ).toBe(5);
   });
   it("persists two protocol repairs without consuming the reserved final stream", async () => {
     const { app, auth, bookId, selection } = fixture;
@@ -586,12 +589,12 @@ describe("selection QA real Nest, SQLite and EPUB (isolated)", () => {
     const terminal = await waitForTurn(app, auth.sessionCookie, conversation.id, turn.id);
     expect(terminal.status).toBe("completed");
     expect(model.calls.map((call) => call.kind)).toEqual([
-      "complete", "complete", "complete", "complete", "complete", "stream",
+      "complete", "complete", "complete", "complete", "complete", "stream", "complete",
     ]);
     const counters = app.get(SqliteService).getDatabase()
-      .prepare("SELECT model_call_count,protocol_repair_call_count FROM selection_qa_turns WHERE id=?")
+      .prepare("SELECT model_call_count FROM selection_qa_turns WHERE id=?")
       .get(turn.id);
-    expect(counters).toEqual({ model_call_count: 4, protocol_repair_call_count: 2 });
+    expect(counters).toEqual({ model_call_count: 7 });
   });
   it("enforces a persisted expired deadline without discarding streamed text", async () => {
     const { app, auth, bookId, selection } = fixture;
@@ -737,7 +740,7 @@ describe("selection QA real Nest, SQLite and EPUB (isolated)", () => {
       turn.id,
     );
     expect(terminal.status).toBe("failed");
-    expect(terminal.errorCode).toBe("TOOL_ARGUMENTS_INVALID");
+    expect(terminal.errorCode).toBe("TOOL_SCOPE_VIOLATION");
     expect(model.calls.filter((c) => c.kind === "stream")).toHaveLength(0);
   });
   it("freezes an active conversation when Catalog publishes replacement bytes", async () => {
@@ -811,7 +814,7 @@ describe("selection QA real Nest, SQLite and EPUB (isolated)", () => {
       conversation.id,
       turn.id,
     );
-    expect(terminal.status).toBe("cancelled");
+    expect(terminal.status).toBe("failed");
     expect(terminal.errorCode).toBe("CONTENT_VERSION_CHANGED");
     await qaRequest(
       app,

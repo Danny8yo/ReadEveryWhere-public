@@ -1,5 +1,5 @@
-import { request } from "../../../services/apiClient";
-import { openCookieSse } from "../../../services/sseTransport";
+import { request } from "../../../shared/web/apiClient";
+import { openCookieSse } from "../../../shared/web/sseTransport";
 import type { LibraryVersion, DownloadProgressEvent } from "../model/sync";
 export function libraryVersion(value: unknown): LibraryVersion {
   if (

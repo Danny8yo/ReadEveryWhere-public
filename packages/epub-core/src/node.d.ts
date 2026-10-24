@@ -62,7 +62,11 @@ export interface EpubIndexChunk {
   displayedQuote: string;
   cfi: string;
   source: import("./types.js").SourceRange;
+  /** v4 Han unigram position stream (always present). */
   tokens: string;
+  /** dual streams only: positional bigram stream and word bag. */
+  bigramTokens?: string;
+  wordTokens?: string;
 }
 export interface IndexBuildResult {
   chunkCount: number;
@@ -86,7 +90,7 @@ export type ReplayInput = Pick<
   EpubIndexChunk,
   "sectionIndex" | "href" | "start" | "end" | "quoteHash" | "cfi"
 >;
-export type EpubEvidence = Omit<EpubIndexChunk, "ordinal" | "tokens"> & {
+export type EpubEvidence = Omit<EpubIndexChunk, "ordinal" | "tokens" | "bigramTokens" | "wordTokens"> & {
   /** Context reads disclose incomplete sentence/structure endpoints; absent on plain replay. */
   contextTruncated?: boolean;
 };
@@ -94,6 +98,8 @@ export function buildEpubIndex(
   bytes: Uint8Array,
   options: WorkerOptions & {
     onBatch: (chunks: EpubIndexChunk[]) => void | Promise<void>;
+    /** "char" (default) builds the v4 stream only; "dual" adds bigram and word streams. */
+    streams?: "char" | "dual";
   },
 ): Promise<IndexBuildResult>;
 export function replayEpubRanges(
@@ -102,6 +108,12 @@ export function replayEpubRanges(
   ranges: ReplayInput[],
   options?: WorkerOptions,
 ): Promise<EpubEvidence[]>;
+export function readEpubRanges(
+  bytes: Uint8Array,
+  scope: Omit<ContentScope, "sectionIndex" | "href">,
+  ranges: Array<Pick<ReplayInput, "sectionIndex" | "href" | "start" | "end">>,
+  options?: WorkerOptions,
+): Promise<{ candidates: EpubEvidence[]; unavailable: Array<Pick<ReplayInput, "sectionIndex" | "href" | "start" | "end"> & { reason: string }> }>;
 export function readEpubContext(
   bytes: Uint8Array,
   scope: EpubRevisionScope,

@@ -17,7 +17,7 @@ describe('selection QA live SSE delivery', () => {
       subscribe: (_user: number, _id: string, callback: () => void) => { notify = callback; return unsubscribe; },
     };
     const res = Object.assign(new EventEmitter(), { setHeader: jest.fn(), flushHeaders: jest.fn(), write: jest.fn(() => true), end: jest.fn() });
-    const req = Object.assign(new EventEmitter(), { user: { userId: 1 } });
+    const req = Object.assign(new EventEmitter(), { headers: { "x-selection-qa-protocol": "2" }, user: { userId: 1 } });
     const controller = new SelectionQaController(service as unknown as SelectionQaService);
     return { res, req, events, unsubscribe, controller, notify: () => notify(), finish: () => { status = 'completed'; } };
   }

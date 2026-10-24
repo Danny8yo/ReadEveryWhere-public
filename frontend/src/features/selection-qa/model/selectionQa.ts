@@ -45,6 +45,7 @@ export interface Evidence {
 }
 /** Additive status projection; historical rows may lack research-decision fields. */
 export interface QaProcessDetail extends Record<string, unknown> {
+  observationStatus?: 'success' | 'empty' | 'recoverable_error' | 'not_executed' | 'interrupted' | 'failed';
   informationNeed?: string;
   informationNeeds?: Array<string | { text: string; targetSource: 'current_book' | 'model_knowledge' | 'other_book_unverified'; sourceName: string; evidenceIds: string[] }>;
   selectedEvidenceIds?: string[];
@@ -60,6 +61,8 @@ export interface Turn {
   turnNumber: number;
   question: string;
   answer: string;
+  answerVersion?: number;
+  quality?: { answerVersion: number; verdict: "pass" | "revise" | "insufficient" };
   status:
     | "queued"
     | "running"
@@ -75,7 +78,7 @@ export interface Turn {
   deadline: number;
 }
 export interface QaEvent {
-  schemaVersion: 1;
+  schemaVersion: 1 | 2;
   turnId: string;
   sequence: number;
   kind: "status" | "answer_delta" | "citation" | "terminal";
@@ -126,7 +129,7 @@ export type PendingCommand =
   | {
       kind: "apply";
       turnId: string;
-      body: { commandId: string; appendText: string; target: ApplyTarget };
+      body: { commandId: string; appendText: string; target: ApplyTarget; answerVersion?: number; acceptUnverified?: boolean };
     };
 export interface QaApi {
   conversations(

@@ -1,6 +1,7 @@
 import { Type } from "class-transformer";
 import {
   IsIn,
+  IsBoolean,
   IsInt,
   IsObject,
   IsOptional,
@@ -48,6 +49,8 @@ export class AnnotationTargetDto {
   @IsOptional() @IsString() @MaxLength(1000) chapterLabel?: string;
 }
 export class ApplyAnnotationDto {
+  @IsOptional() @IsInt() @Min(0) answerVersion?: number;
+  @IsOptional() @IsBoolean() acceptUnverified?: boolean;
   @IsString() @MinLength(1) @MaxLength(128) commandId!: string;
   @IsString() @MinLength(1) @MaxLength(50000) appendText!: string;
   @ValidateNested()

@@ -2,8 +2,9 @@ import { EventEmitter } from "node:events";
 import { ReadingStateEventBus } from "../application/reading-state-event-bus";
 import { ReadingStateController } from "./reading-state.controller";
 
-describe("ReadingStateController SSE", () => {
-  it("writes only the matching reading-state event and releases the subscription on close", () => {
+// 编号对应 doc/同步测试用例审查.md
+describe("笔记推送接口（ReadingStateController）", () => {
+  it("C2 只推当前这本书的变化；本设备产生的变化不推回给自己；连接关闭后不再推", () => {
     const events = new ReadingStateEventBus();
     const snapshots = { execute: jest.fn().mockReturnValue({ revision: 0 }) };
     let cleanup = () => {};

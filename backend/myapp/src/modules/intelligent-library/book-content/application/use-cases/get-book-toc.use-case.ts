@@ -1,3 +1,4 @@
+import type { ContentExecution } from "../ports/content-execution";
 import type { BookDocument, DocumentTocNode } from "../../domain/book-document.types";
 import { ReaderToolException } from "../../domain/reader-tool-error";
 import { BookDocumentLoader } from "../book-document.loader";
@@ -25,8 +26,8 @@ interface GetBookTocInput {
 export class GetBookTocUseCase {
   constructor(private readonly documentLoader: BookDocumentLoader) {}
 
-  async execute(userId: number, bookId: number, input: GetBookTocInput) {
-    const document = await this.documentLoader.load(userId, bookId);
+  async execute(userId: number, bookId: number, input: GetBookTocInput, execution?: ContentExecution) {
+    const document = await this.documentLoader.load(userId, bookId, execution);
     this.validateRequest(input);
 
     if (input.mode === "tree") {
@@ -74,7 +75,7 @@ export class GetBookTocUseCase {
     };
   }
 
-  private validateRequest(input: GetBookTocInput) {
+  private validateRequest(input: GetBookTocInput, execution?: ContentExecution) {
     if (input.mode === "navigation") {
       if (!input.nodeIds) {
         throw new ReaderToolException(

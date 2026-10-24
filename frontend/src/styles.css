@@ -1,7 +1,279 @@
 @import "tailwindcss";
 
+/*
+ * 封面流设计 tokens（见 docs/封面流视觉重构计划.md 第 4、5 节）。
+ * 组件只引用这些变量，不写字面颜色或裸 z-index 数字。
+ * 浅色值在 :root；深色值在 [data-theme="dark"]。主题由 shared/web/theme.ts 写到 <html data-theme>。
+ */
 :root {
   color-scheme: light;
+
+  --ui-bg: #f6f5f2;
+  --ui-bg2: #eeede9;
+  --ui-surface: #ffffff;
+  --ui-surface2: #f0efeb;
+  --ui-fg: #17171a;
+  --ui-fg2: #3b3b40;
+  --ui-muted: #6c6a71;
+  --ui-line: rgba(0, 0, 0, 0.1);
+  --ui-strong: #17171a;
+  --ui-on-strong: #ffffff;
+  --ui-ok: #2b8250;
+  --ui-warn: #94600a;
+  --ui-err: #c0392b;
+  --ui-info: #2d5fbf;
+  --ui-scrim: rgba(30, 30, 34, 0.4);
+  --ui-shadow: rgba(40, 32, 24, 0.3);
+  /* 详情顶部渐变里书色的占比 */
+  --ui-tint: 24%;
+
+  --ui-font-sans: -apple-system, BlinkMacSystemFont, "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", "Noto Sans CJK SC", "Source Han Sans SC", sans-serif;
+  --ui-font-serif: "Songti SC", STSong, "Noto Serif CJK SC", "Source Han Serif SC", SimSun, serif;
+
+  /* 应用外壳尺寸：顶栏高度、手机底部标签栏高度（不含安全区） */
+  --app-header-h: 64px;
+  --app-tabbar-h: 62px;
+
+  --ui-radius-cover: 6px;
+  --ui-radius-control: 12px;
+  --ui-radius-card: 16px;
+  --ui-radius-overlay: 22px;
+
+  /*
+   * 层级刻度：#app 自成一层（见下），这些值只在 body 层的浮层之间、或同一组件内部比较。
+   * 弹窗、底部弹出页、抽屉都用 --ui-z-modal，同级按打开顺序叠放（见 shared/web/overlayStack.ts）。
+   */
+  /* 顶栏/底栏取 40：高于旧页面里的装饰（≤30），低于还没迁出页面的旧弹窗（50–120），P6 之后同样成立 */
+  --ui-z-raised: 1;
+  --ui-z-sticky: 20;
+  --ui-z-nav: 40;
+  --ui-z-dropdown: 45;
+  --ui-z-modal: 60;
+  --ui-z-toast: 70;
+}
+
+:root[data-theme="dark"] {
+  color-scheme: dark;
+
+  --ui-bg: #121214;
+  --ui-bg2: #17171a;
+  --ui-surface: #1d1d21;
+  --ui-surface2: #28282d;
+  --ui-fg: #f4f2ee;
+  --ui-fg2: #d4d1cb;
+  --ui-muted: #9a97a0;
+  --ui-line: rgba(255, 255, 255, 0.09);
+  --ui-strong: #f4f2ee;
+  --ui-on-strong: #121214;
+  --ui-ok: #7ed39a;
+  --ui-warn: #e8b04a;
+  --ui-err: #ff8170;
+  --ui-info: #93b9ff;
+  --ui-scrim: rgba(8, 8, 10, 0.6);
+  --ui-shadow: rgba(0, 0, 0, 0.65);
+  --ui-tint: 46%;
+}
+
+/* 让 Tailwind 也能用这些 token，例如 bg-ui-surface、text-ui-muted */
+@theme inline {
+  --color-ui-bg: var(--ui-bg);
+  --color-ui-bg2: var(--ui-bg2);
+  --color-ui-surface: var(--ui-surface);
+  --color-ui-surface2: var(--ui-surface2);
+  --color-ui-fg: var(--ui-fg);
+  --color-ui-fg2: var(--ui-fg2);
+  --color-ui-muted: var(--ui-muted);
+  --color-ui-line: var(--ui-line);
+  --color-ui-strong: var(--ui-strong);
+  --color-ui-on-strong: var(--ui-on-strong);
+  --color-ui-ok: var(--ui-ok);
+  --color-ui-warn: var(--ui-warn);
+  --color-ui-err: var(--ui-err);
+  --color-ui-info: var(--ui-info);
+}
+/* 层级在 Tailwind 里写成 z-(--ui-z-modal)，不要写 z-50 / z-[100] */
+
+html,
+body,
+#app {
+  min-height: 100%;
+  margin: 0;
+}
+/* 滚动定位（锚点、键盘聚焦、scrollIntoView）避开固定的顶栏和手机底部标签栏 */
+html {
+  scroll-padding-top: calc(var(--app-header-h) + env(safe-area-inset-top, 0px));
+}
+@media (max-width: 640px) {
+  html { scroll-padding-bottom: calc(var(--app-tabbar-h) + env(safe-area-inset-bottom, 0px)); }
+}
+body {
+  background: var(--ui-bg);
+  color: var(--ui-fg);
+  font-family: var(--ui-font-sans);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+::selection {
+  background: var(--ui-strong);
+  color: var(--ui-on-strong);
+}
+
+/*
+ * 应用根节点自成一个层叠上下文：页面里无论写了多大的 z-index，都不会盖过 Teleport 到 body 的浮层。
+ * 这是防止“卡片角标穿透弹窗”的第一道保险。
+ */
+#app {
+  isolation: isolate;
+}
+
+/* 浮层打开时锁定背景滚动（由 shared/web/overlayStack.ts 设置） */
+html.ui-scroll-locked,
+html.ui-scroll-locked body {
+  overflow: hidden;
+}
+
+/* 表单控件公共样式：在 <input>/<select>/<textarea> 上加 class="ui-input" */
+.ui-input {
+  width: 100%;
+  min-height: 42px;
+  border: 1px solid var(--ui-line);
+  border-radius: var(--ui-radius-control);
+  background: var(--ui-surface2);
+  color: var(--ui-fg);
+  padding: 10px 12px;
+  font: inherit;
+  font-size: 14px;
+  outline: none;
+  transition: border-color 0.15s, box-shadow 0.15s;
+}
+.ui-input::placeholder {
+  color: var(--ui-muted);
+}
+.ui-input:focus-visible {
+  border-color: var(--ui-fg);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--ui-fg) 14%, transparent);
+}
+.ui-input:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ui-motion,
+  .ui-motion * {
+    transition: none !important;
+    animation: none !important;
+  }
+}
+
+/* 工具层弹窗的公共布局（UiOverlay 面板内使用）：标题栏 / 内容 / 吸底操作栏 / 两列表单 */
+.ui-modal-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 20px 22px 6px; }
+.ui-modal-head h2 { margin: 0; font-size: 18px; font-weight: 900; }
+.ui-modal-head p { margin: 2px 0 0; font-size: 12px; color: var(--ui-muted); }
+.ui-modal-body { display: grid; gap: 14px; padding: 10px 22px 18px; }
+.ui-modal-foot {
+  position: sticky;
+  bottom: 0;
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  align-items: center;
+  gap: 8px;
+  padding: 14px 22px calc(14px + env(safe-area-inset-bottom, 0px));
+  border-top: 1px solid var(--ui-line);
+  background: var(--ui-bg);
+}
+.ui-modal-foot .ui-modal-foot__note { margin: 0 auto 0 0; font-size: 12px; color: var(--ui-muted); }
+.ui-form-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+.ui-form-grid > .ui-form-grid__full { grid-column: 1 / -1; }
+.ui-readonly { display: grid; gap: 10px; padding: 12px 14px; border-radius: 12px; background: var(--ui-surface2); font-size: 13px; }
+.ui-readonly dt { font-size: 11px; color: var(--ui-muted); }
+.ui-readonly dd { margin: 2px 0 0; color: var(--ui-fg2); overflow-wrap: anywhere; }
+@media (max-width: 640px) {
+  .ui-form-grid { grid-template-columns: 1fr; }
+}
+
+/*
+ * 阅读层（P8）：阅读器外壳跟随阅读主题（明亮/暗黑/羊皮），不跟应用外壳主题。
+ * 在 .book-reader.theme-* 内重新定义 --ui-*，阅读器里的面板和 shared/ui 组件就自动换成对应配色；
+ * Teleport 到 body 的阅读器浮层（笔记弹窗、批注工具栏、脚注、问答确认框）挂 .rd-skin-* 拿到同一套值。
+ * --rd-paper / --rd-ink 是正文底色和字色（与 domain/themes.ts 一致，正文颜色不变）；
+ * 书色 --rd-ac 由 BookReader 按书名挂在根节点上，只用于进度条和批注波浪线。
+ */
+.book-reader.theme-light, .rd-skin-light {
+  color-scheme: light;
+  --rd-paper: #ffffff;
+  --rd-ink: #1a1a1a;
+}
+.book-reader.theme-dark, .rd-skin-dark {
+  color-scheme: dark;
+  --rd-paper: #1a1a1a;
+  --rd-ink: #cfcfcf;
+  --ui-bg: #121214;
+  --ui-bg2: #17171a;
+  --ui-surface: #1d1d21;
+  --ui-surface2: #28282d;
+  --ui-fg: #f4f2ee;
+  --ui-fg2: #d4d1cb;
+  --ui-muted: #9a97a0;
+  --ui-line: rgba(255, 255, 255, 0.09);
+  --ui-strong: #f4f2ee;
+  --ui-on-strong: #121214;
+  --ui-ok: #7ed39a;
+  --ui-warn: #e8b04a;
+  --ui-err: #ff8170;
+  --ui-info: #93b9ff;
+  --ui-scrim: rgba(8, 8, 10, 0.6);
+  --ui-shadow: rgba(0, 0, 0, 0.65);
+}
+.book-reader.theme-sepia, .rd-skin-sepia {
+  color-scheme: light;
+  --rd-paper: #f5f0e1;
+  --rd-ink: #5b4636;
+  --ui-bg: #f3ecda;
+  --ui-bg2: #ece3cd;
+  --ui-surface: #f9f4e7;
+  --ui-surface2: #ece3cd;
+  --ui-fg: #3d2f22;
+  --ui-fg2: #5b4636;
+  --ui-muted: #85735b;
+  --ui-line: rgba(91, 70, 54, 0.16);
+  --ui-strong: #4a3928;
+  --ui-on-strong: #f9f4e7;
+  --ui-ok: #3f7a3a;
+  --ui-warn: #8a5a08;
+  --ui-err: #a8392a;
+  --ui-info: #3a5f9a;
+  --ui-scrim: rgba(60, 45, 30, 0.35);
+  --ui-shadow: rgba(91, 70, 54, 0.32);
+}
+/* 浅色基础值不在 :root 时（应用外壳是深色），明亮主题的阅读器仍要用浅色组件 */
+:root[data-theme="dark"] .book-reader.theme-light, :root[data-theme="dark"] .rd-skin-light {
+  --ui-bg: #f6f5f2;
+  --ui-bg2: #eeede9;
+  --ui-surface: #ffffff;
+  --ui-surface2: #f0efeb;
+  --ui-fg: #17171a;
+  --ui-fg2: #3b3b40;
+  --ui-muted: #6c6a71;
+  --ui-line: rgba(0, 0, 0, 0.1);
+  --ui-strong: #17171a;
+  --ui-on-strong: #ffffff;
+  --ui-ok: #2b8250;
+  --ui-warn: #94600a;
+  --ui-err: #c0392b;
+  --ui-info: #2d5fbf;
+  --ui-scrim: rgba(30, 30, 34, 0.4);
+  --ui-shadow: rgba(40, 32, 24, 0.3);
+}
+/* 分段控件的选中态在深色下用实心（UiSegmented 按 <html data-theme> 判断，阅读器里改按阅读主题） */
+:is(.book-reader, [class*="rd-skin-"]) .ui-segmented .ui-segmented__item.ui-segmented__item--on {
+  background: var(--ui-surface);
+  color: var(--ui-fg);
+}
+:is(.book-reader.theme-dark, .rd-skin-dark) .ui-segmented .ui-segmented__item.ui-segmented__item--on {
+  background: var(--ui-strong);
+  color: var(--ui-on-strong);
 }
 
 /* 手机竖屏应用壳：保留原桌面布局，覆盖动态视口与系统安全区。 */

@@ -1,6 +1,6 @@
 import type { BookAnalysisSummary } from '../../metadata/model/bookAnalysis';
 import type { FormalBookReadingProfile } from '../../metadata/model/bookAnalysis';
-import type { EbookFormat } from '../../../utils/bookFormat';
+import type { EbookFormat } from '../../../shared/utils/bookFormat';
 export type SourcePlatform = 'zlibrary';
 export type SearchAvailability = 'available' | 'unavailable';
 export interface SearchQuery {

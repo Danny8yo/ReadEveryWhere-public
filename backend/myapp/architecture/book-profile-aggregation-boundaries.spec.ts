@@ -7,21 +7,12 @@ describe("Book/Profile aggregation migration boundaries", () => {
   it("enforces the final Book/Profile ownership boundaries", () => {
     const actual = new Set<string>();
     const catalogProfile = "src/modules/intelligent-library/catalog/domain/book-reading-profile.ts";
-    const analysisRepository = source(
-      "src/modules/intelligent-library/book-analysis/infrastructure/book-analysis.repository.ts",
-    );
-    const aiReadingAdapter = source(
-      "src/modules/ai-reading/infrastructure/intelligent-library-book-analysis.adapter.ts",
-    );
     const bookRepository = source(
       "src/modules/intelligent-library/catalog/infrastructure/persistence/sqlite/sqlite-book.repository.ts",
     );
 
     if (!existsSync(resolve(root, catalogProfile))) {
       actual.add("formal-profile-owned-by-book-analysis");
-    }
-    if (/BookAnalysisAccessPort/.test(aiReadingAdapter)) {
-      actual.add("ai-reading-uses-book-analysis-access");
     }
     if (!/\bbook_profiles\b/.test(bookRepository)) {
       actual.add("book-repository-does-not-persist-profile");

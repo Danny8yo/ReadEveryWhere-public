@@ -17,7 +17,7 @@
 }
 ```
 
-`revision` 是 `(user_id, book_id)` 维度的统一状态版本。批注、书签或进度发生一次真实变更时递增；幂等书签创建、幂等删除、空更新和被设备序列拒绝的旧进度不会递增。业务表写入与统一 revision 在同一个 `BEGIN IMMEDIATE` 事务内提交，提交后才发布在线通知。
+`revision` 是 `(user_id, book_id)` 维度的统一状态版本。批注、书签或进度发生一次真实变更时递增；幂等书签创建、空更新和被设备序列拒绝的旧进度不会递增。业务表写入与统一 revision 在同一个 `BEGIN IMMEDIATE` 事务内提交，提交后才发布在线通知。
 
 阅读器打开顺序为：加载并验证书籍文件，读取统一快照，按快照进度定位并渲染批注/书签，然后维持 SSE 连接。服务端快照失败时不使用浏览器旧进度继续定位。
 
@@ -76,9 +76,9 @@ data: {"bookId":42,"revision":19,"changed":["progress","annotations"]}
 |------|------|------|
 | GET | `/?bookId=...` | 获取单书书签 |
 | POST | `/` | 创建书签，保存 location、fraction、chapterLabel |
-| DELETE | `/:id` | 幂等硬删除 |
+| DELETE | `/:id` | 硬删除 |
 
-`(user_id, book_id, location)` 唯一。重复 POST 返回已存在的书签，不重复创建、不递增统一 revision。DELETE 对不存在或当前用户不可见的目标都返回 `{ deleted: true }`，真实删除才递增 revision 并发布事件。
+`(user_id, book_id, location)` 唯一。重复 POST 返回已存在的书签，不重复创建、不递增统一 revision。DELETE 成功返回 `{ deleted: true }`，递增 revision 并发布事件。目标不存在、属于其他用户或已被删除时统一返回 `404 / 40401 / Bookmark not found / details.field=bookmark`，三种情况回复完全相同，不泄露其他用户的书签编号，也不递增 revision。客户端重复删除（另一台设备已删除或网络重试）收到该 404 时应视为删除成功。
 
 ## 阅读进度 `/api/v1/progress`
 

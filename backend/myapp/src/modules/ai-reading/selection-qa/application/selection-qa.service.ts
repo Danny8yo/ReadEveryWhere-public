@@ -200,6 +200,10 @@ export class SelectionQaService {
       turn.answer.trim().length === 0
     )
       throw new SelectionQaError("TURN_NOT_APPLICABLE");
+    if (turn.answerVersion !== undefined && input.answerVersion !== turn.answerVersion)
+      throw new SelectionQaError("ANSWER_VERSION_MISMATCH");
+    if (turn.status !== "completed" && input.acceptUnverified !== true)
+      throw new SelectionQaError("UNVERIFIED_ANSWER_CONFIRMATION_REQUIRED");
     const conversation = this.get(userId, turn.conversationId);
     if (conversation.status === "frozen")
       throw new SelectionQaError("CONVERSATION_FROZEN");

@@ -1,10 +1,10 @@
-import { openCookieSse } from "../../../services/sseTransport";
+import { openCookieSse } from "../../../shared/web/sseTransport";
 import type {
   ReadingStateSnapshot,
   ReadingStateChangedEvent,
   ReadingStateStreamHandlers,
 } from "../model/readingState";
-import { fetchWithAuth, resolveBackendUrl } from "../../../services/apiClient";
+import { fetchWithAuth, resolveBackendUrl } from "../../../shared/web/apiClient";
 export async function getReadingState(
   bookId: number,
 ): Promise<ReadingStateSnapshot> {

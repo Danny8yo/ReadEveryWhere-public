@@ -50,8 +50,11 @@ describe("BookRetrievalService request boundaries", () => {
       publish: jest.fn(),
       fail: jest.fn(),
       search: jest.fn().mockReturnValue([]),
+      searchLists: jest.fn().mockReturnValue([]),
     };
     worker = {
+      format: "unigram-file-v1",
+      plan: jest.fn(),
       version: {
         chunkerVersion: "c",
         tokenizerVersion: "t",
@@ -67,6 +70,7 @@ describe("BookRetrievalService request boundaries", () => {
           tokenizerVersion: "t",
         }),
       replay: jest.fn().mockResolvedValue([evidence]),
+      ranges: jest.fn().mockResolvedValue({ candidates: [evidence], unavailable: [] }),
       candidatesReplay: jest.fn().mockResolvedValue([evidence]),
       expand: jest.fn().mockResolvedValue([{ ...evidence, hitRanges: [{sectionIndex:0,start:1,end:3}], contextTruncated:false }]),
       context: jest.fn().mockResolvedValue(evidence),
@@ -115,6 +119,68 @@ describe("BookRetrievalService request boundaries", () => {
     expect(limited).toMatchObject({ state:"ready", budgetLimited:true, candidates:[{quote:"证据"},{quote:"证据"}] });
     await expect(service.searchCandidates(1, { ...scope, queries:["证据"], limit:21, deadline:Date.now()+1000 })).rejects.toThrow("1–20");
     await expect(service.searchCandidates(1, { ...scope, queries:["证据"], maxChars:12001, deadline:Date.now()+1000 })).rejects.toThrow("1–12000");
+  });
+  it("labels v4 recall lists with the de-duplicated query order", async () => {
+    repository.current.mockReturnValue({ id: "g", state: "ready", error: null, unavailable: [] });
+    worker.queries.mockReturnValue([["ta"], ["tb"]]);
+    repository.search.mockImplementation((_i, _g, tokens) => tokens[0] === "tb" ? [{ ...evidence, id: 2, start: 10, end: 12, tokens: "tb", score: -1 }] : []);
+    const pool = await service.searchPool(1, { ...scope, queries: ["A", "A", "B"], deadline: Date.now() + 1000 });
+    if (pool.state !== "ready") throw new Error("Expected ready");
+    expect(pool.lists.map(l => l.query)).toEqual(["A", "B"]);
+    expect(pool.candidates[0].paths).toEqual([{ kind: "phrase", query: "B", rank: 0 }]);
+  });
+  describe("dual-v1 fusion", () => {
+    const list = (kind: string, weight: number) => ({ kind, table: "word", query: "q", phrases: ["w00"], minimum: 1, weight }) as never;
+    const chunk = (id: number, start: number, end = start + 2) => ({ ...evidence, id, start, end, tokens: "t", score: -1 });
+    beforeEach(() => {
+      (worker as { format: string }).format = "dual-file-v1";
+      repository.current.mockReturnValue({ id: "g", state: "ready", error: null, unavailable: [] });
+    });
+    it("C1 sums weight/(60+rank) across lists and records every finding path", async () => {
+      worker.plan.mockReturnValue({ version: "v", lists: [list("word_query", 1), list("bigram_soft", 0.6)] });
+      repository.searchLists.mockReturnValue([
+        { list: list("word_query", 1), considered: 1, minimum: 1, hits: [chunk(1, 0), chunk(2, 10)] },
+        { list: list("bigram_soft", 0.6), considered: 1, minimum: 1, hits: [chunk(2, 10)] },
+      ]);
+      const pool = await service.searchPool(1, { ...scope, queries: ["q"], informationNeed: "need", deadline: Date.now() + 1000 });
+      if (pool.state !== "ready") throw new Error("Expected ready");
+      // chunk 2: 1/62 + 0.6/61 > chunk 1: 1/61
+      expect(pool.candidates.map(c => c.start)).toEqual([10, 0]);
+      expect(pool.candidates[0].paths).toEqual([{ kind: "word_query", query: "q", rank: 1 }, { kind: "bigram_soft", query: "q", rank: 0 }]);
+      expect(pool.candidates[1].paths).toEqual([{ kind: "word_query", query: "q", rank: 0 }]);
+      expect(pool.lists.map(l => [l.kind, l.hitCount])).toEqual([["word_query", 2], ["bigram_soft", 1]]);
+      expect(worker.plan).toHaveBeenCalledWith(["q"], "need");
+      expect(repository.search).not.toHaveBeenCalled();
+    });
+    it("C2 equal fused scores keep the lower chunk id first", async () => {
+      worker.plan.mockReturnValue({ version: "v", lists: [list("word_query", 1), list("char", 1)] });
+      repository.searchLists.mockReturnValue([
+        { list: list("word_query", 1), considered: 1, minimum: 1, hits: [chunk(9, 50)] },
+        { list: list("char", 1), considered: 1, minimum: 1, hits: [chunk(3, 0)] },
+      ]);
+      const pool = await service.searchPool(1, { ...scope, queries: ["q"], deadline: Date.now() + 1000 });
+      if (pool.state !== "ready") throw new Error("Expected ready");
+      expect(pool.candidates.map(c => c.start)).toEqual([0, 50]);
+    });
+    it("C3/C4 drops a ≥80% same-section overlap and caps the pool", async () => {
+      worker.plan.mockReturnValue({ version: "v", lists: [list("word_query", 1)] });
+      repository.searchLists.mockReturnValue([{ list: list("word_query", 1), considered: 1, minimum: 1,
+        hits: [chunk(1, 0, 10), chunk(2, 1, 10), ...Array.from({ length: 40 }, (_, n) => chunk(10 + n, 100 + n * 20))] }]);
+      const pool = await service.searchPool(1, { ...scope, queries: ["q"], poolLimit: 30, deadline: Date.now() + 1000 });
+      if (pool.state !== "ready") throw new Error("Expected ready");
+      expect(pool.candidates).toHaveLength(30);
+      expect(pool.candidates.map(c => c.start)).not.toContain(1);
+      expect(pool.candidates.map(c => c.fusedRank)).toEqual(Array.from({ length: 30 }, (_, n) => n));
+      await expect(service.searchPool(1, { ...scope, queries: ["q"], poolLimit: 41, deadline: Date.now() + 1000 })).rejects.toThrow("1–40");
+    });
+    it("C5 a building generation returns building without partial lists", async () => {
+      repository.current.mockReturnValue(null);
+      repository.latest.mockReturnValue({ id: "g", state: "building", error: null, unavailable: [] });
+      worker.plan.mockReturnValue({ version: "v", lists: [list("word_query", 1)] });
+      const pool = await service.searchPool(1, { ...scope, queries: ["q"], deadline: Date.now() + 60 });
+      expect(pool).toEqual({ state: "building", generation: "g" });
+      expect(repository.searchLists).not.toHaveBeenCalled();
+    });
   });
   it("rejects candidate raw quote corruption even when range and CFI match", async () => {
     repository.current.mockReturnValue({id:"g",state:"ready",error:null,unavailable:[]});

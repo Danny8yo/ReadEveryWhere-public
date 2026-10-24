@@ -1,9 +1,9 @@
-import { randomId } from '../../../services/randomId';
+import { randomId } from '../../../shared/web/randomId';
 import { SearchServiceError } from '../domain/searchError';
 import type { SearchQuery, SearchResponse } from '../model/book';
 import type { SearchPageResult } from './dto';
 import { mapSearchApiBookToInternal } from './mappers';
-import { request } from '../../../services/apiClient';
+import { request } from '../../../shared/web/apiClient';
 const mapErrorMessage = (code: number, fallbackMessage: string): string => {
     if (code === 40002)
         return '请输入有效关键词';

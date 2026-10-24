@@ -1,4 +1,4 @@
-import { randomId } from '../../../services/randomId';
+import { randomId } from '../../../shared/web/randomId';
 import { encodePending, decodePending } from "../domain/pending";
 import { reactive, onBeforeUnmount } from "vue";
 import { createQaState, createQaController } from "../domain/controller";

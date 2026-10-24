@@ -1,6 +1,6 @@
 import type {BookmarkLocationType,BookmarkRecord,CreateBookmarkParams} from '../model/bookmark';
-import { request } from "../../../services/apiClient";
-import type { Bookmark } from "../../../lib/reader/bookmarks";
+import { request } from "../../../shared/web/apiClient";
+import type { Bookmark } from "../model/bookmark";
 
 
 

@@ -42,6 +42,7 @@ async function main() {
             slow: { delayMs: 3000 },
             failure: { failAfterFirstDelta: true },
             forged: { fakeCitation: true },
+            quality: { reviseFirst: true, checkDelayMs: 2500 },
           };
           const mode = String(req.body.mode);
           if (!(mode in modes)) {

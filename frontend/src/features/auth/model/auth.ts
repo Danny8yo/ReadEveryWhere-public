@@ -8,3 +8,7 @@ export interface AuthResponse {
 export interface RegistrationStatus {
     registrationEnabled: boolean;
 }
+
+export interface AuthSessionData {
+  user: AuthUser;
+}

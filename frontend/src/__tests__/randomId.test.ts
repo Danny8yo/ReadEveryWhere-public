@@ -1,5 +1,5 @@
 import { afterEach, expect, it, vi } from 'vitest';
-import { randomId } from '../services/randomId';
+import { randomId } from '../shared/web/randomId';
 afterEach(() => vi.unstubAllGlobals());
 it('uses the native UUID when available', () => {
   vi.stubGlobal('crypto', { getRandomValues: vi.fn(), randomUUID: () => 'native-id' });

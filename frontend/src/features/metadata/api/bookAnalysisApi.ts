@@ -1,4 +1,4 @@
-import { request } from '../../../services/apiClient';
+import { request } from '../../../shared/web/apiClient';
 import type { AnalyzeBookOptions, AnalyzeBooksPayload, BookAnalysisBatchResponse, BookAnalysisDetail, BookAnalysisRequestResult } from '../model/bookAnalysis';
 const BASE_PATH = '/api/v1/book-analysis';
 export const bookAnalysisApi = {

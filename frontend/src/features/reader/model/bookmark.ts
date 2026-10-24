@@ -18,3 +18,10 @@ export interface CreateBookmarkParams {
     fraction: number;
     chapterLabel?: string | null;
 }
+
+export interface Bookmark {
+  id?: string;
+  cfi: string;
+  fraction: number;
+  chapterLabel?: string;
+}

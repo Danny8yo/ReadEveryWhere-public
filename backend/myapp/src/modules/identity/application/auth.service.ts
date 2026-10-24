@@ -1,6 +1,7 @@
 import type { IdentityTransactionPort } from "./ports/identity-transaction.port";
 import type { IssuedSession } from "../domain/auth.types";
 import { IdentityApplicationError } from "./identity-application.error";
+import { LoginAttemptLimiter } from "./login-attempt-limiter";
 import type { IdentityTelemetryPort } from "./ports/identity-telemetry.port";
 import type { PasswordPort } from "./ports/password.port";
 import { SessionService } from "./session.service";
@@ -30,6 +31,7 @@ export class AuthService {
     private readonly sessions: SessionService,
     private readonly telemetry: IdentityTelemetryPort,
     private readonly transaction: IdentityTransactionPort,
+    private readonly loginAttempts: LoginAttemptLimiter = new LoginAttemptLimiter(),
   ) {}
 
   async register(command: RegisterCommand): Promise<IssuedSession> {
@@ -68,8 +70,19 @@ export class AuthService {
 
   async login(command: LoginCommand): Promise<IssuedSession> {
     const email = this.normalizeEmail(command.email);
+    // 锁定期间连正确密码也拒绝，否则锁定只会拖慢而挡不住猜中。
+    const lockedForSeconds = this.loginAttempts.lockedForSeconds(email);
+    if (lockedForSeconds > 0) {
+      this.telemetry.warn({ event: "auth.login.locked", email, lockedForSeconds });
+      throw IdentityApplicationError.rateLimited(
+        `登录失败次数过多，请 ${Math.ceil(lockedForSeconds / 60)} 分钟后再试`,
+        lockedForSeconds,
+      );
+    }
+
     const user = this.users.findByEmail(email);
     if (!user) {
+      this.loginAttempts.recordFailure(email);
       this.telemetry.warn({
         event: "auth.login.failed",
         reason: "USER_NOT_FOUND",
@@ -83,6 +96,7 @@ export class AuthService {
       user.passwordHash,
     );
     if (!passwordMatches) {
+      this.loginAttempts.recordFailure(email);
       this.telemetry.warn({
         event: "auth.login.failed",
         reason: "PASSWORD_MISMATCH",
@@ -91,6 +105,7 @@ export class AuthService {
       });
       throw IdentityApplicationError.unauthorized("Invalid email or password");
     }
+    this.loginAttempts.recordSuccess(email);
 
     return this.transaction.run(() => {
       this.assertPasswordUnchanged(user.id, user.passwordHash);

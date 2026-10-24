@@ -1,7 +1,7 @@
 // @vitest-environment happy-dom
 import { describe, it, expect } from 'vitest';
 import { mount } from '@vue/test-utils';
-import MarkdownContent from '../components/MarkdownContent.vue';
+import MarkdownContent from '../shared/ui/MarkdownContent.vue';
 import { markdownText } from '../shared/domain/markdown';
 describe('reading Markdown', () => {
   it('renders formatting while blocking HTML, remote images and model links', () => {

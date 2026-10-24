@@ -42,7 +42,7 @@ export function qaRequest(
 ) {
   return request(app.getHttpServer())
     [method]("/api/v1/selection-qa" + path)
-    .set(sessionHeaders(token));
+    .set(sessionHeaders(token)).set("X-Selection-QA-Protocol", "2");
 }
 export const terminalMetrics = new Map<string, Record<string, unknown>>();
 export async function waitForTurn(

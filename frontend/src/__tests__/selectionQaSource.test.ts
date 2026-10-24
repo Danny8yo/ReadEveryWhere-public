@@ -2,9 +2,9 @@ import { describe, it, expect, vi, afterEach } from "vitest";
 import { webcrypto, createHash } from "node:crypto";
 import { createReaderSourceLoader } from "../features/reader/web/sourceLoader";
 import { createBookFileAccessUrl } from "../features/library/api/libraryApi";
-import { fetchWithAuth } from "../services/apiClient";
-import { getCachedBookFile, putCachedBookFile } from "../services/bookFileCache";
-vi.mock("../services/bookFileCache", () => ({
+import { fetchWithAuth } from "../shared/web/apiClient";
+import { getCachedBookFile, putCachedBookFile } from "../features/reader/web/bookFileCache";
+vi.mock("../features/reader/web/bookFileCache", () => ({
   buildBookFileCacheKey: (d: { userId: number; bookId: number; checksum: string }) => `${d.userId}:${d.bookId}:${d.checksum}`,
   getCachedBookFile: vi.fn(),
   putCachedBookFile: vi.fn(),
@@ -12,7 +12,7 @@ vi.mock("../services/bookFileCache", () => ({
 vi.mock("../features/library/api/libraryApi", () => ({
   createBookFileAccessUrl: vi.fn(),
 }));
-vi.mock("../services/apiClient", () => ({ fetchWithAuth: vi.fn(), resolveBackendUrl: (url: string) => url }));
+vi.mock("../shared/web/apiClient", () => ({ fetchWithAuth: vi.fn(), resolveBackendUrl: (url: string) => url }));
 afterEach(() => { vi.unstubAllGlobals(); vi.clearAllMocks(); });
 const input = {
   bookId: 1,

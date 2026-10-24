@@ -1,6 +1,6 @@
 # 书籍 AI 预分析
 
-本模块在启动 AI 自主阅读前生成并持久化 `BookReadingProfileCandidate`。它只分析用户私有书架中的 EPUB，读取元数据、目录、内容统计，并在信息不足时有界读取少量代表性正文；不会直接修改 Catalog 的正式阅读画像、原文、基础元数据或批注。
+本模块生成并持久化 `BookReadingProfileCandidate`。它只分析用户私有书架中的 EPUB，读取元数据、目录、内容统计，并在信息不足时有界读取少量代表性正文；不会直接修改 Catalog 的正式阅读画像、原文、基础元数据或批注。
 
 - 基础路径：`/api/v1/book-analysis`
 - 鉴权：所有接口均需 HttpOnly 会话 Cookie
@@ -8,7 +8,7 @@
 - 当前策略版本：`book-profile-v1`
 - 当前批量上限：50 个 ID
 - worker 并发：默认 1，可通过 `BOOK_ANALYSIS_CONCURRENCY` 配置为 1-4
-- 当前代码：`src/modules/intelligent-library/book-analysis/`；BookAnalysis 的归属和 metadata 输入来自 Catalog `CatalogBookViewQueryPort` 的只读 View，文件输入来自 `BookContentCatalogPort`/`BookDocumentLoader`，不会为分析查询加载写聚合或全部 `source_refs`。AiReading Infrastructure Adapter 经 IntelligentLibrary `public/BookReadingProfileAccessPort` 获取 Catalog 正式画像准入投影，再转换为 AiReading 自有 Application Port
+- 当前代码：`src/modules/intelligent-library/book-analysis/`；BookAnalysis 的归属和 metadata 输入来自 Catalog `CatalogBookViewQueryPort` 的只读 View，文件输入来自 `BookContentCatalogPort`/`BookDocumentLoader`，不会为分析查询加载写聚合或全部 `source_refs`。正式画像由 Catalog 持有，旧自主阅读的专用画像准入查询 Port 和适配链已移除；选区问答不要求画像准入。
 
 ## 11.1 状态与有效性
 

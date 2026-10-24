@@ -115,7 +115,7 @@ describe("DownloadService", () => {
     expect(context.fileDelivery.attach).not.toHaveBeenCalled();
     expect(context.tasks.findTaskById(queued.id)).toMatchObject({
       status: "failed",
-      errorMessage: "Download failed",
+      errorMessage: "upstream unavailable",
       localPath: null,
     });
   });
@@ -133,8 +133,24 @@ describe("DownloadService", () => {
     expect(context.fileDelivery.detach).not.toHaveBeenCalled();
     expect(context.tasks.findTaskById(queued.id)).toMatchObject({
       status: "failed",
-      errorMessage: "Download failed",
+      errorMessage: "attach failed",
       localPath: null,
+    });
+  });
+
+  it("reports duplicate artifact checks as a library conflict", async () => {
+    const context = createContext();
+    context.download.download.mockResolvedValue(artifact());
+    context.fileDelivery.attach.mockImplementation(() => {
+      throw new Error("SQLITE_CONSTRAINT: UNIQUE constraint failed: book_artifacts.user_id, book_artifacts.checksum");
+    });
+
+    const queued = await context.service.createTask(7, command);
+    await eventually(() => context.tasks.findTaskById(queued.id)?.status === "failed");
+
+    expect(context.tasks.findTaskById(queued.id)).toMatchObject({
+      status: "failed",
+      errorMessage: "This file is already in your library",
     });
   });
 
@@ -165,7 +181,7 @@ describe("DownloadService", () => {
 
     expect(context.tasks.findTaskById(queued.id)).toMatchObject({
       status: "failed",
-      errorMessage: "Download failed",
+      errorMessage: "injected markCompleted failure",
     });
     expect(context.fileDelivery.detach).not.toHaveBeenCalled();
   });

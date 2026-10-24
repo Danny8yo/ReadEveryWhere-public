@@ -17,8 +17,6 @@ import {
 } from "./public/book-file-acquisition.port";
 import { BOOK_SOURCE_REFERENCE_QUERY_PORT } from "./public/book-source-reference-query.port";
 import { MetadataEnrichmentModule } from "./metadata-enrichment/metadata-enrichment.module";
-import { BOOK_READING_PROFILE_ACCESS_PORT } from "./public/book-reading-profile-access.port";
-import { BookReadingProfileAccessService } from "./book-analysis/application/book-reading-profile-access.service";
 
 @Module({
   imports: [LibrarySyncModule,
@@ -37,7 +35,6 @@ import { BookReadingProfileAccessService } from "./book-analysis/application/boo
       provide: BOOK_OWNERSHIP_PORT,
       useExisting: SqliteBookOwnershipAdapter,
     },
-    { provide: BOOK_READING_PROFILE_ACCESS_PORT, useExisting: BookReadingProfileAccessService },
     {
       provide: LIBRARY_QUERY_PORT,
       useExisting: LibraryQueryService,
@@ -50,7 +47,6 @@ import { BookReadingProfileAccessService } from "./book-analysis/application/boo
     CatalogModule,
     BookContentModule,
     BOOK_OWNERSHIP_PORT,
-    BOOK_READING_PROFILE_ACCESS_PORT,
     LIBRARY_QUERY_PORT,
     BOOK_SOURCE_REFERENCE_QUERY_PORT,
     BOOK_FILE_STATUS_QUERY_PORT,

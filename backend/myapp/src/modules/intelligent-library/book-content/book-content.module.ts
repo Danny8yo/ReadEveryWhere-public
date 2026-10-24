@@ -1,10 +1,12 @@
+import { BOOK_STRUCTURED_CONTENT_PORT } from "../public/book-structured-content.port";
+import { BookStructuredContentService } from "./application/book-structured-content.service";
 import { resolve } from "node:path";
 import { SqlitePersistenceModule } from "../../../platform/persistence/sqlite/sqlite-persistence.module";
 import { SqliteService } from "../../../platform/persistence/sqlite/sqlite.service";
 import { BOOK_RETRIEVAL_PORT } from "../public/book-retrieval.port";
 import { BookRetrievalService } from "./application/book-retrieval.service";
 import { SqliteKeywordIndexRepository } from "./infrastructure/sqlite-keyword-index.repository";
-import { KeywordIndexWorkerAdapter } from "./infrastructure/keyword-index-worker.adapter";
+import { KeywordIndexWorkerAdapter, contentIndexPipeline } from "./infrastructure/keyword-index-worker.adapter";
 import {
   EPUB_SELECTION_RESOLVER_PORT,
   type EpubSelectionResolverPort,
@@ -54,6 +56,12 @@ import { BOOK_METADATA_CONTENT_PORT } from "../public/book-metadata-content.port
 @Module({
   imports: [SqlitePersistenceModule, CatalogModule],
   providers: [
+    { provide: BOOK_STRUCTURED_CONTENT_PORT,
+      inject: [BookDocumentLoader, GetBookTocUseCase, ReadBookUseCase, ReadBookFromTocUseCase, BOOK_RETRIEVAL_PORT, CURRENT_BOOK_ARTIFACT_FENCE_PORT],
+      useFactory: (documents: BookDocumentLoader, toc: GetBookTocUseCase, read: ReadBookUseCase, batches: ReadBookFromTocUseCase,
+        retrieval: import("../public/book-retrieval.port").BookRetrievalPort, fence: CurrentBookArtifactFencePort) =>
+        new BookStructuredContentService(documents, toc, read, batches, retrieval, fence),
+    },
     {
       provide: BOOK_RETRIEVAL_PORT,
       inject: [
@@ -72,7 +80,7 @@ import { BOOK_METADATA_CONTENT_PORT } from "../public/book-metadata-content.port
           source,
           fence,
           extractor,
-          new KeywordIndexWorkerAdapter(),
+          new KeywordIndexWorkerAdapter(contentIndexPipeline(process.env.CONTENT_INDEX_PIPELINE)),
           new SqliteKeywordIndexRepository(sqlite.getDatabase(), fence, resolve(process.env.DOWNLOAD_STORAGE_PATH || "data/downloads", ".keyword-index")),
         ),
     },
@@ -229,6 +237,7 @@ import { BOOK_METADATA_CONTENT_PORT } from "../public/book-metadata-content.port
     },
   ],
   exports: [
+    BOOK_STRUCTURED_CONTENT_PORT,
     BOOK_RETRIEVAL_PORT,
     BOOK_SELECTION_PORT,
     BookDocumentLoader,

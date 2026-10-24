@@ -1,8 +1,7 @@
 import { SelectionQaError } from "./selection-qa.types";
 import type { QaSavedEvidence, QaTool } from "./selection-qa-runtime.port";
-import { BOOK_MAX_EXPAND_SELECTED } from "../../../intelligent-library/public/book-retrieval.port";
 export type QaSourceTarget = "current_book" | "model_knowledge" | "other_book_unverified";
-export const MAX_SELECTED_CANDIDATES = BOOK_MAX_EXPAND_SELECTED;
+export const MAX_SELECTED_CANDIDATES = 12;
 export const MAX_INFORMATION_NEEDS = 16;
 export interface QaInformationNeed {
   text: string;
@@ -23,11 +22,11 @@ export const finishResearchTool: QaTool = {
   type: "function",
   function: {
     name: "finish_research", strict: true,
-    description: `End research ALONE. Classify each information need by source: current_book, model_knowledge, or other_book_unverified. For current_book needs, nominate directly supporting evidence IDs in descending priority. The host deterministically applies the shared limit of ${MAX_SELECTED_CANDIDATES} retrieved candidates and researchBudget.maxSelectedCandidateChars across all needs; lower-priority nominations beyond that budget are omitted rather than making the turn fail. A current_book need may link multiple evidence IDs when needed. When the question attributes words to another named book, include an other_book_unverified need with that title; its wording is unverified, but still explain useful concepts from model knowledge. Only current_book needs can select book evidence. Initial/history context may also be selected and does not count as a retrieved candidate. General knowledge needs no book evidence. Do not use this book to verify another book's contents. List genuinely unverifiable external facts and insufficient book evidence. Use concise Chinese operational conclusions, not a draft answer.`,
+    description: `Choose final answer delivery ALONE. This does not execute or automatically expand evidence. Classify each information need by source: current_book, model_knowledge, or other_book_unverified. For current_book needs, nominate directly supporting evidence IDs in descending priority. Select only evidence actually supporting the answer; use expand_evidence before delivery when qualifications may be missing. A current_book need may link multiple evidence IDs when needed. When the question attributes words to another named book, include an other_book_unverified need with that title; its wording is unverified, but still explain useful concepts from model knowledge. Only current_book needs can select book evidence. Initial/history context may also be selected and does not count as a retrieved candidate. General knowledge needs no book evidence. Do not use this book to verify another book's contents. List genuinely unverifiable external facts and insufficient book evidence. Use concise Chinese operational conclusions, not a draft answer.`,
     parameters: {
       type: "object", additionalProperties: false,
       properties: {
-        informationNeeds: { type: "array", minItems: 1, maxItems: MAX_INFORMATION_NEEDS, description: `Current-question needs with explicit source targets. Keep the list concise and use at most ${MAX_INFORMATION_NEEDS} needs. For each current_book need, nominate evidence in descending priority; the host applies the shared candidate count and character budget across all needs. sourceName is the mentioned other book title only for other_book_unverified; otherwise use an empty string. Do not invent follow-up tasks.`, items: { type: "object", additionalProperties: false, properties: {
+        informationNeeds: { type: "array", minItems: 1, maxItems: MAX_INFORMATION_NEEDS, description: `Current-question needs with explicit source targets. Keep the list concise and use at most ${MAX_INFORMATION_NEEDS} needs. For each current_book need select only verified supporting passages. sourceName is the mentioned other book title only for other_book_unverified; otherwise use an empty string. Do not invent follow-up tasks.`, items: { type: "object", additionalProperties: false, properties: {
           text: { type: "string", minLength: 1, maxLength: 200 },
           targetSource: { type: "string", enum: ["current_book", "model_knowledge", "other_book_unverified"] },
           sourceName: { type: "string", maxLength: 200 },
@@ -57,23 +56,42 @@ export function parseDecision(raw: Record<string, unknown>, evidence: Map<string
   if (!Array.isArray(needs) || needs.length < 1 || needs.length > MAX_INFORMATION_NEEDS)
     throw new SelectionQaError("TOOL_ARGUMENTS_INVALID", 409, { field: "informationNeeds", constraint: `1-${MAX_INFORMATION_NEEDS} source-targeted needs` });
   const selectedEvidenceIds: string[] = [];
-  for (const need of needs) {
-    if (!need || typeof need !== "object" || Array.isArray(need))
-      throw new SelectionQaError("TOOL_ARGUMENTS_INVALID", 409, { field: "informationNeeds", constraint: "source-targeted objects" });
+  const invalid = (field: string, constraint: string, details: Record<string, unknown> = {}): never => {
+    throw new SelectionQaError("TOOL_ARGUMENTS_INVALID", 409, { field, constraint, ...details });
+  };
+  for (const [index, need] of needs.entries()) {
+    const path = `informationNeeds[${index}]`;
+    if (!need || typeof need !== "object" || Array.isArray(need)) invalid(path, "object");
     const item = need as Record<string, unknown>;
-    if (Object.keys(item).length !== 4 || ["text", "targetSource", "sourceName", "evidenceIds"].some(key => !(key in item)) ||
-      typeof item.text !== "string" || !item.text.trim() || item.text.length > 200 ||
-      !["current_book", "model_knowledge", "other_book_unverified"].includes(String(item.targetSource)) ||
-      typeof item.sourceName !== "string" || item.sourceName.length > 200 ||
-      !Array.isArray(item.evidenceIds) ||
-      item.evidenceIds.some(id => typeof id !== "string" || !id || id.length > 80) ||
-      new Set(item.evidenceIds).size !== item.evidenceIds.length)
-      throw new SelectionQaError("TOOL_ARGUMENTS_INVALID", 409, { field: "informationNeeds", constraint: "valid source target, sourceName and current-book-only evidence IDs" });
-    if (item.targetSource === "other_book_unverified" ? !item.sourceName.trim() : item.sourceName !== "")
-      throw new SelectionQaError("TOOL_ARGUMENTS_INVALID", 409, { field: "informationNeeds.sourceName", constraint: "nonblank for other_book_unverified, empty otherwise", targetSource: item.targetSource });
-    if (item.targetSource !== "current_book" && item.evidenceIds.length > 0)
-      throw new SelectionQaError("TOOL_ARGUMENTS_INVALID", 409, { field: "informationNeeds.evidenceIds", constraint: "only current_book needs may reference book evidence", targetSource: item.targetSource });
-    for (const id of item.evidenceIds as string[]) if (!selectedEvidenceIds.includes(id)) selectedEvidenceIds.push(id);
+    const fields = ["text", "targetSource", "sourceName", "evidenceIds"];
+    if (Object.keys(item).length !== 4 || fields.some(key => !(key in item)))
+      invalid(path, "exactly text, targetSource, sourceName, evidenceIds");
+    if (!Array.isArray(item.evidenceIds)) invalid(`${path}.evidenceIds`, "array");
+    const ids = item.evidenceIds as unknown[];
+    if (ids.some(id => typeof id !== "string" || !id || id.length > 80))
+      invalid(`${path}.evidenceIds`, "nonblank evidence IDs, each at most 80 characters");
+    // A source-label/length mistake cannot downgrade foreign IDs into a
+    // recoverable formatting issue.
+    const unknownIds = (ids as string[]).filter(id => !evidence.has(id));
+    if (unknownIds.length) throw new SelectionQaError("EVIDENCE_INVALID", 409, {
+      field: `${path}.evidenceIds`, constraint: "every evidence ID must belong to this turn's verified evidence", unknownCount: unknownIds.length,
+    });
+    if (ids.length > MAX_SELECTED_CANDIDATES)
+      invalid(`${path}.evidenceIds`, "itemCount", { actual: ids.length, maximum: MAX_SELECTED_CANDIDATES });
+    if (new Set(ids).size !== ids.length) invalid(`${path}.evidenceIds`, "unique IDs");
+    if (typeof item.text !== "string") invalid(`${path}.text`, "string");
+    if (!(item.text as string).trim() || (item.text as string).length > 200)
+      invalid(`${path}.text`, "length", { actual: (item.text as string).length, minimum: 1, maximum: 200 });
+    if (typeof item.targetSource !== "string" || !["current_book", "model_knowledge", "other_book_unverified"].includes(item.targetSource))
+      invalid(`${path}.targetSource`, "current_book, model_knowledge or other_book_unverified");
+    if (typeof item.sourceName !== "string") invalid(`${path}.sourceName`, "string");
+    if ((item.sourceName as string).length > 200)
+      invalid(`${path}.sourceName`, "length", { actual: (item.sourceName as string).length, maximum: 200 });
+    if (item.targetSource === "other_book_unverified" ? !(item.sourceName as string).trim() : item.sourceName !== "")
+      invalid(`${path}.sourceName`, "nonblank for other_book_unverified, empty otherwise", { targetSource: item.targetSource });
+    if (item.targetSource !== "current_book" && ids.length > 0)
+      invalid(`${path}.evidenceIds`, "only current_book needs may reference book evidence", { targetSource: item.targetSource });
+    for (const id of ids as string[]) if (!selectedEvidenceIds.includes(id)) selectedEvidenceIds.push(id);
   }
   for (const key of ["externalEvidenceNeeded", "insufficientEvidence"] as const) {
     const value = raw[key];
@@ -87,41 +105,4 @@ export function parseDecision(raw: Record<string, unknown>, evidence: Map<string
   const unknownCount = decision.selectedEvidenceIds.filter(id => !evidence.has(id)).length;
   if (unknownCount) throw new SelectionQaError("EVIDENCE_INVALID", 409, { field: "informationNeeds.evidenceIds", constraint: "every evidence ID must belong to this turn's verified evidence", unknownCount });
   return decision;
-}
-
-export function projectDecisionEvidence(
-  decision: QaResearchDecision,
-  evidence: ReadonlyMap<string, QaSavedEvidence>,
-  candidateIds: ReadonlySet<string>,
-  maxCandidateChars: number,
-): { decision: QaResearchDecision; omittedEvidenceIds: string[]; selectedCandidateChars: number } {
-  const acceptedCandidates = new Set<string>();
-  const omittedCandidates = new Set<string>();
-  let selectedCandidateChars = 0;
-  const informationNeeds = decision.informationNeeds.map(need => ({
-    ...need,
-    evidenceIds: need.evidenceIds.filter(id => {
-      if (!candidateIds.has(id)) return true;
-      if (acceptedCandidates.has(id)) return true;
-      if (omittedCandidates.has(id)) return false;
-      const item = evidence.get(id);
-      if (!item) throw new SelectionQaError("EVIDENCE_INVALID", 409, { field: "informationNeeds.evidenceIds", constraint: "every evidence ID must belong to this turn's verified evidence", unknownCount: 1 });
-      if (acceptedCandidates.size >= MAX_SELECTED_CANDIDATES || selectedCandidateChars + item.quote.length > maxCandidateChars) {
-        omittedCandidates.add(id);
-        return false;
-      }
-      acceptedCandidates.add(id);
-      selectedCandidateChars += item.quote.length;
-      return true;
-    }),
-  }));
-  const selectedEvidenceIds: string[] = [];
-  for (const need of informationNeeds)
-    for (const id of need.evidenceIds)
-      if (!selectedEvidenceIds.includes(id)) selectedEvidenceIds.push(id);
-  return {
-    decision: { ...decision, informationNeeds, selectedEvidenceIds },
-    omittedEvidenceIds: [...omittedCandidates],
-    selectedCandidateChars,
-  };
 }

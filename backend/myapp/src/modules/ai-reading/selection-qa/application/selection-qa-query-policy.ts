@@ -1,6 +1,25 @@
 import { prepareKeywordQueries } from "@readeverywhere/epub-core/keywords";
 import { SelectionQaError } from "./selection-qa.types";
 export const QA_QUERY_POLICY_VERSION = "selection-qa-fixed-slots-v4";
+/** Search delivery budgets. Reranked pages are small; the fallback keeps the pre-reranking 20/12000 delivery. */
+export const QA_SEARCH = Object.freeze({
+  poolLimit: 30,
+  topK: 6,
+  rerankedMaxChars: 6000,
+  expandMaxChars: 8000,
+  expandWindowChars: 1600,
+  fallbackLimit: 20,
+  fallbackMaxChars: 12000,
+  rerankTimeoutMs: 3000,
+  rerankQueryMaxChars: 1000,
+});
+/** The reranker sees the model's information need first, then the user's question, within a fixed length. */
+export function rerankQuery(informationNeed: string, question: string): { text: string; truncated: boolean } {
+  const chars = Array.from(`${informationNeed.trim()}\n${question.trim()}`);
+  return chars.length > QA_SEARCH.rerankQueryMaxChars
+    ? { text: chars.slice(0, QA_SEARCH.rerankQueryMaxChars).join(""), truncated: true }
+    : { text: chars.join(""), truncated: false };
+}
 export type QueryValidation = { field: string; constraint: string; actual?: number; minimum?: number; maximum?: number };
 export class QueryArgumentError extends SelectionQaError {
   constructor(public readonly validation: QueryValidation, public readonly validations: QueryValidation[] = [validation]) {
@@ -56,6 +75,6 @@ export function validateSearchArguments(raw: Record<string, unknown>): string[] 
 export function stripHistoricalCitations(text: string): string {
   return text.replace(
     /\[\[evidence:[^\]]*(?:\]\]|$)/gu,
-    "[历史引用需重新验证]",
+    "",
   );
 }

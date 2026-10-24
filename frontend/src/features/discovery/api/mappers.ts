@@ -1,6 +1,6 @@
 import type { SearchAvailability, SearchResultItem } from '../model/book';
 import type { SearchApiBook } from './dto';
-import { EBOOK_FORMATS, type EbookFormat } from '../../../utils/bookFormat';
+import { EBOOK_FORMATS, type EbookFormat } from '../../../shared/utils/bookFormat';
 const normalizeSearchAuthors = (authors: string[] | null | undefined): string[] => {
     if (!authors || authors.length === 0) {
         return [];

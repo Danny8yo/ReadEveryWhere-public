@@ -1,5 +1,5 @@
 import type { SearchResultItem, SearchResponse } from '../model/book';
-import type { EbookFormat } from '../../../utils/bookFormat';
+import type { EbookFormat } from '../../../shared/utils/bookFormat';
 export interface SearchErrorState {
     code: number;
     message: string;

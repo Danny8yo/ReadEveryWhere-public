@@ -7,15 +7,17 @@ import { createRequire } from 'node:module'
 import { fixtures, resourcesFor } from './fixtures.mjs'
 import { encodingFixtures } from './encoding-fixtures.mjs'
 import AdmZip from 'adm-zip'
-import { parseEpub } from '../src/node.js'
-const require = createRequire(new URL('../../../frontend/src/package.json', import.meta.url))
+import { parseEpub, readEpubRanges } from '../src/node.js'
+import { EPUB_EXTRACTOR_VERSION, NORMALIZATION_VERSION } from '../src/index.js'
+const require = createRequire(new URL('../../../frontend/package.json', import.meta.url))
 const { chromium } = require('@playwright/test')
 const root = new URL('../../../', import.meta.url)
 const routes = new Map(await Promise.all([
-    'packages/epub-core/src/decode.js', 'frontend/src/lib/foliate-js/view.js',
-    'frontend/src/lib/foliate-js/progress.js', 'frontend/src/lib/foliate-js/overlayer.js', 'frontend/src/lib/foliate-js/text-walker.js', 'frontend/src/lib/foliate-js/vendor/zip.js',
+    'packages/epub-core/src/decode.js', 'frontend/src/vendor/foliate-js/view.js',
+    'frontend/src/vendor/foliate-js/progress.js', 'frontend/src/vendor/foliate-js/overlayer.js', 'frontend/src/vendor/foliate-js/text-walker.js', 'frontend/src/vendor/foliate-js/vendor/zip.js',
     'packages/epub-core/src/index.js', 'packages/epub-core/test/fixtures.mjs', 'packages/epub-core/test/host-case.mjs',
-    'frontend/src/lib/foliate-js/paginator.js', 'packages/epub-core/src/foliate/epub.js', 'packages/epub-core/src/foliate/epubcfi.js',
+    'frontend/src/vendor/foliate-js/paginator.js', 'packages/epub-core/src/foliate/epub.js', 'packages/epub-core/src/foliate/epubcfi.js',
+    'frontend/src/vendor/foliate-js/reader-range.js', 'frontend/src/vendor/foliate-js/section-view.js', 'frontend/src/vendor/foliate-js/continuous-scroll.js',
 ].map(async path => [`/${path}`, await readFile(new URL(path, root), 'utf8')])))
 const server = createServer((req, res) => {
     if (req.url === '/') { res.setHeader('Content-Type', 'text/html'); res.end('<!doctype html><html><head><script type="importmap">{"imports":{"@readeverywhere/epub-core/decode":"/packages/epub-core/src/decode.js","@readeverywhere/epub-core/":"/packages/epub-core/src/"}}</script></head><body></body></html>'); return }
@@ -46,6 +48,40 @@ try {
     })
     const page = await context.newPage()
     await page.goto(base)
+    report.structuredRanges = []
+    for (const fixture of [
+        { id: 'second-repeated-passage', body: '<p id="first">重复句子。</p><p id="second">重复句子。</p>', quote: '重复句子。', second: true },
+        { id: 'cross-inline-nfc', body: '<p>e<span>\u0301</span>lan</p>', quote: 'e\u0301lan' },
+        { id: 'pre-whitespace', body: '<pre> a\n b </pre>', quote: ' a\n b ' },
+        { id: 'synthetic-range-edges', body: '<img alt="首合成"/><p>真实正文。</p><img alt="尾合成"/>', quote: '真实正文。', gaps: true },
+    ]) {
+        const source = `<html xmlns="http://www.w3.org/1999/xhtml"><head><title>强结构范围</title></head><body>${fixture.body}</body></html>`
+        const zip = new AdmZip()
+        for (const [name,value] of Object.entries(resourcesFor({ source,mediaType:'application/xhtml+xml' }))) zip.addFile(name,Buffer.from(value))
+        const bytes=zip.toBuffer(),parsed=await parseEpub(bytes),text=parsed.sections[0].text
+        const scope={bookId:1,fileChecksum:`sha256:${createHash('sha256').update(bytes).digest('hex')}`,extractorVersion:EPUB_EXTRACTOR_VERSION,normalizationVersion:NORMALIZATION_VERSION}
+        const start=fixture.second?text.lastIndexOf('重复句子。'):0
+        const result=await readEpubRanges(bytes,scope,[{sectionIndex:0,href:'OPS/chapter.xhtml',start,end:text.length}])
+        if(result.candidates.length!==1)throw Error(`Missing structural candidate: ${fixture.id}`)
+        const candidate=result.candidates[0]
+        const web=await page.evaluate(async ({bytes,candidate})=>{
+            const {makeBook}=await import('/frontend/src/vendor/foliate-js/view.js')
+            const book=await makeBook(new File([new Uint8Array(bytes)],'ranges.epub',{type:'application/epub+zip'}))
+            const view=document.createElement('foliate-view');view.style.cssText='width:900px;height:700px';document.body.append(view)
+            try {
+                await view.open(book);await view.goTo(candidate.cfi)
+                const resolved=view.resolveCFI(candidate.cfi),content=view.renderer.getContents().find(c=>c.index===resolved.index)
+                if(!content)throw Error('Structural CFI did not navigate to its section')
+                const range=resolved.anchor(content.doc)
+                const element=range.startContainer.nodeType===3?range.startContainer.parentElement:range.startContainer
+                return {quote:range.toString(),second:!!element.closest?.('#second'),sectionIndex:resolved.index}
+            } finally {view.close();view.remove()}
+        },{bytes:Array.from(bytes),candidate})
+        const passed=web.quote===fixture.quote && web.quote===candidate.displayedQuote && web.sectionIndex===0 && (!fixture.second||web.second) && (!fixture.gaps||result.unavailable.length===2)
+        report.structuredRanges.push({id:fixture.id,passed,web,candidate,gaps:result.unavailable})
+        if(!passed)report.failures.push(`strong structural CFI: ${fixture.id}`)
+        console.log(`${passed?'PASS':'FAIL'} strong structural CFI: ${fixture.id}`)
+    }
     report.zipEncodingCases = []
     for (const fixture of encodingFixtures) {
         const zip = new AdmZip()
@@ -57,7 +93,7 @@ try {
         try { node = { text: (await parseEpub(bytes)).sections[0].text } }
         catch (error) { node = { error: error.message } }
         const web = await page.evaluate(async bytes => {
-            const { makeBook } = await import('/frontend/src/lib/foliate-js/view.js')
+            const { makeBook } = await import('/frontend/src/vendor/foliate-js/view.js')
             const core = await import('/packages/epub-core/src/index.js')
             const CFI = await import('/packages/epub-core/src/foliate/epubcfi.js')
             let book, frame
@@ -119,7 +155,7 @@ try {
         const node = await runNode(fixture)
         const chromiumResult = await page.evaluate(async fixture => {
             const { runCase } = await import('/packages/epub-core/test/host-case.mjs')
-            await import('/frontend/src/lib/foliate-js/paginator.js')
+            await import('/frontend/src/vendor/foliate-js/paginator.js')
             const readers = []
             try {
                 return await runCase(fixture, async url => {

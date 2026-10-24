@@ -1,6 +1,6 @@
-import { readerFactory } from '../../../lib/reader/factory';
-import { createTOCView } from '../../../lib/foliate-js/ui/tree.js';
-import type { BookFormat } from '../../../utils/bookFormat';
+import { readerFactory } from './factory';
+import { createTOCView } from '../../../vendor/foliate-js/ui/tree.js';
+import type { BookFormat } from '../../../shared/utils/bookFormat';
 import type { ReaderPort } from '../domain/ReaderPort';
 import type { ReaderSource, WebReaderPort } from './WebReaderPort';
 /** Foliate 原始对象、DOM 挂载和 PDF renderer 能力只在 Web 宿主边界使用。 */

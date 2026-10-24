@@ -2,12 +2,10 @@
 import { createRequire } from 'node:module'
 import { readFile, mkdir } from 'node:fs/promises'
 import { fileURLToPath, pathToFileURL } from 'node:url'
-const frontend = new URL('../../../frontend/src/', import.meta.url)
+const frontend = new URL('../../../frontend/', import.meta.url)
 const require = createRequire(new URL('package.json', frontend))
 const { chromium, expect, devices } = require('@playwright/test')
 const { preview } = await import(pathToFileURL(require.resolve('vite')).href)
-const { AiReadingService } = await import('../../../backend/myapp/dist/modules/ai-reading/application/ai-reading.service.js')
-const budgetConfig = AiReadingService.prototype.getBudgetConfig()
 const epub = await readFile(new URL('e2e/fixtures/interaction.epub', frontend))
 const output = new URL('../reports/ui-baseline/', import.meta.url)
 await mkdir(output, { recursive: true })
@@ -43,8 +41,6 @@ try {
             if (path === '/api/v1/progress') return ok({ id: 1, ...route.request().postDataJSON(), revision: 1 })
             if (path === '/api/v1/book-analysis/books/7') return ok({ bookId: 7, status: 'not_analyzed', stale: false, candidate: null, errorCode: null })
             if (path === '/api/v1/ai-reading/model-config') return ok({ modelId: 'deepseek-v4-flash', configured: false })
-            if (path === '/api/v1/ai-reading/conversations') return ok({ items: [], total: 0 })
-            if (path === '/api/v1/ai-reading/budget-config') return ok(budgetConfig)
             unexpected.push(`${route.request().method()} ${path}`)
             return route.fulfill({ status: 500, json: { code: 500, message: `Unmocked fixture request: ${path}` } })
         })
@@ -62,21 +58,8 @@ try {
         await content.locator('#selection-text').dblclick({ position: { x: 30, y: 10 } })
         await expect(page.getByRole('button', { name: '高亮', exact: true })).toBeVisible()
         await page.screenshot({ path: fileURLToPath(new URL(`${name}-toolbar.png`, output)), animations: 'disabled' })
-        await page.reload()
-        await page.getByText(book.title, { exact: true }).first().click()
-        await page.getByRole('button', { name: '开始阅读' }).click()
-        await expect(page.locator('.book-reader .rd-spinner')).toHaveCount(0)
-        const ai = page.getByTitle('AI 自主阅读', { exact: true })
-        await ai.click()
-        await expect(page.locator('.ai-reading-panel')).toBeVisible()
-        await expect(page.locator('.ai-analysis-gate')).toBeVisible()
-        await expect.poll(async () => {
-            const box = await page.locator('.ai-reading-panel').boundingBox()
-            return box !== null && box.x >= 0 && box.x + box.width <= page.viewportSize().width + 1
-        }).toBe(true)
-        await page.screenshot({ path: fileURLToPath(new URL(`${name}-ai-panel.png`, output)), animations: 'disabled' })
         if (unexpected.length) throw new Error(`Unexpected requests: ${unexpected.join(', ')}`)
-        console.log(`${name}: library / reader / toolbar / existing AI panel captured (mock, no profile)`)
+        console.log(`${name}: library / reader / toolbar captured (mock)`)
         await context.close()
     }
 } finally { if (browser) await browser.close(); await new Promise(resolve => server.httpServer.close(resolve)) }

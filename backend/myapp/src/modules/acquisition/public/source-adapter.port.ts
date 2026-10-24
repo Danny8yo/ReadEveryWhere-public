@@ -76,6 +76,12 @@ export interface SourceLoginResult {
 }
 
 export interface SourceLoginPort {
+  probe?(baseUrl: string): Promise<{ category: string; status: number | null; diagnostic: unknown }>;
+  discoverDomains?(bootstrapUrl: string): Promise<{
+    source: string;
+    discoveredAt: string;
+    candidates: Array<{ baseUrl: string; category: string; status: number | null; diagnostic: unknown }>;
+  }>;
   loginWithCredentials(email: string, password: string, baseUrl: string): Promise<SourceLoginResult>;
   validateCookies(
     remixUserid: string,

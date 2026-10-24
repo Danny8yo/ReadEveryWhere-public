@@ -1,5 +1,5 @@
-import type { ZlibraryConfig, SaveZlibraryConfigPayload, ImportZlibraryCookiesPayload } from '../model/zlibrary';
-import { request } from '../../../services/apiClient';
+import type { ZlibraryConfig, SaveZlibraryConfigPayload, ImportZlibraryCookiesPayload, ZlibraryProbeResult, ZlibraryDiscoveryResult } from '../model/zlibrary';
+import { request } from '../../../shared/web/apiClient';
 export const zlibraryApi = {
     getConfig: (): Promise<ZlibraryConfig> => {
         return request<ZlibraryConfig>('/api/v1/user/zlibrary-config');
@@ -16,6 +16,11 @@ export const zlibraryApi = {
             body: JSON.stringify(payload),
         });
     },
+    probe: (baseUrl: string): Promise<ZlibraryProbeResult> => request<ZlibraryProbeResult>('/api/v1/user/zlibrary-config/probe', {
+        method: 'POST',
+        body: JSON.stringify({ baseUrl }),
+    }),
+    discoverDomains: (baseUrl: string): Promise<ZlibraryDiscoveryResult> => request<ZlibraryDiscoveryResult>('/api/v1/user/zlibrary-config/discover-domains', { method: 'POST', body: JSON.stringify({ baseUrl }) }),
     updateBaseUrl: (baseUrl: string): Promise<{
         baseUrl: string;
     }> => {

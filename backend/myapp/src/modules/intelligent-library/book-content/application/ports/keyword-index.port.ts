@@ -5,14 +5,18 @@ import type {
   ExpandedEpubEvidence,
   ReplayInput,
 } from "@readeverywhere/epub-core/node";
+import type { DualRecallList } from "@readeverywhere/epub-core/keywords";
 import type {
   IndexVersion,
   RetrievalScope,
 } from "../../../public/book-retrieval.port";
+/** Per-generation FTS file layout; part of the generation record, checked on every read. */
+export type IndexFormat = "unigram-file-v1" | "dual-file-v1";
 export interface IndexIdentity extends RetrievalScope {
   userId: number;
   key: string;
   version: IndexVersion;
+  format: IndexFormat;
 }
 export interface IndexGeneration {
   id: string;
@@ -54,10 +58,21 @@ export interface KeywordIndexRepository {
     id: string,
     queryTokens: string[],
   ): RankedChunk[];
+  /** dual-file-v1 only: every list is evaluated against the same verified file. */
+  searchLists(
+    identity: IndexIdentity,
+    id: string,
+    lists: DualRecallList[],
+    limit: number,
+  ): Array<{ list: DualRecallList; considered: number; minimum: number; hits: RankedChunk[] }>;
 }
 export interface KeywordIndexWorker {
+  ranges(bytes: Buffer, scope: RetrievalScope, ranges: Array<Pick<ReplayInput, "sectionIndex" | "href" | "start" | "end">>, deadline: number, signal: AbortSignal): Promise<{ candidates: EpubEvidence[]; unavailable: Array<Pick<ReplayInput, "sectionIndex" | "href" | "start" | "end"> & { reason: string }> }>;
+
   readonly version: IndexVersion;
+  readonly format: IndexFormat;
   queries(input: string[]): string[][];
+  plan(queries: string[], informationNeed?: string): { version: string; lists: DualRecallList[] };
   build(
     bytes: Buffer,
     onBatch: (chunks: EpubIndexChunk[]) => Promise<void>,

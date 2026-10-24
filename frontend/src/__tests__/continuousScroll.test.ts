@@ -1,8 +1,8 @@
 // @vitest-environment happy-dom
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { ContinuousScroll } from '../lib/foliate-js/continuous-scroll.js';
+import { ContinuousScroll } from '../vendor/foliate-js/continuous-scroll.js';
 
-vi.mock('../lib/foliate-js/section-view.js', () => ({
+vi.mock('../vendor/foliate-js/section-view.js', () => ({
   SectionView: class {
     element = document.createElement('div');
     document = document.implementation.createHTMLDocument();
@@ -20,7 +20,7 @@ vi.mock('../lib/foliate-js/section-view.js', () => ({
     destroy() {}
   },
 }));
-vi.mock('../lib/foliate-js/reader-range.js', () => ({
+vi.mock('../vendor/foliate-js/reader-range.js', () => ({
   getVisibleRange: (doc: Document) => {
     const range = doc.createRange(); range.selectNodeContents(doc.body);
     range.getBoundingClientRect = () => new DOMRect(0, 0, 400, 20);

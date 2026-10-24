@@ -11,7 +11,7 @@ describe("model-owned bounded queries", () => {
     expect(() => prepareKeywordQueries(validateQueries(["SSD 随机I/O", "闪存 擦除 写放大", "固态硬盘 写入 寿命", "缓存 刷盘"]))).not.toThrow();
   });
   it("strips historical citation markers", () => {
-    expect(stripHistoricalCitations("answer [[evidence:old]] then [[evidence:unfinished")).toBe("answer [历史引用需重新验证] then [历史引用需重新验证]");
+    expect(stripHistoricalCitations("answer [[evidence:old]] then [[evidence:unfinished")).toBe("answer  then ");
   });
 });
 

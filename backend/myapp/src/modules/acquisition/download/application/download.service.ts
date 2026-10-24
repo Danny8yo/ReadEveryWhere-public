@@ -153,7 +153,15 @@ export class DownloadService {
       }
     } catch (error) {
       if (this.tasks.findTaskById(task.id)?.status === "canceled") return;
-      this.tasks.markFailed(task.id, downloadFailureMessage(error));
+      const message = downloadFailureMessage(error);
+      // Keep the actual delivery/activation failure visible to operators. The
+      // previous generic message made a fully downloaded file indistinguishable
+      // from a CDN failure.
+      console.error(`[DownloadService] task=${task.id} phase=${this.tasks.findTaskById(task.id)?.phase ?? "unknown"} failed`, {
+        errorName: error instanceof Error ? error.name : typeof error,
+        errorCode: isStructuredApplicationError(error) ? error.details.reason : null,
+      });
+      this.tasks.markFailed(task.id, message);
     }
   }
 
@@ -173,14 +181,18 @@ export class DownloadService {
 
 function downloadFailureMessage(error: unknown): string {
   if (error instanceof AcquisitionError) return error.message;
-  if (!(error instanceof Error) || !isStructuredApplicationError(error)) return "Download failed";
+  if (!(error instanceof Error)) return "Download failed";
+  if (/uq_book_artifacts_active_checksum|UNIQUE constraint failed: book_artifacts\.user_id, book_artifacts\.checksum/i.test(error.message)) {
+    return "This file is already in your library";
+  }
+  if (!isStructuredApplicationError(error)) return error.message || "Download failed";
   return error.details.upstream
     ? `${error.message} (upstream=${JSON.stringify(error.details.upstream)})`
     : error.message;
 }
 
 function isStructuredApplicationError(
-  error: Error,
+  error: unknown,
 ): error is Error & { status: number; code: number; details: { reason: string; upstream?: unknown } } {
   const candidate = error as Error & {
     status?: unknown;

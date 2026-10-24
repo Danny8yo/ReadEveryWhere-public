@@ -14,7 +14,8 @@
     "<rootDir>/test/setup-e2e.ts"
   ],
   "setupFilesAfterEnv": [
-    "<rootDir>/test/setup-storage.ts"
+    "<rootDir>/test/setup-storage.ts",
+    "<rootDir>/test/setup-retry.ts"
   ],
   "testEnvironment": "node",
   "moduleNameMapper": {

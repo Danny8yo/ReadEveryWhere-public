@@ -4,6 +4,9 @@ import { SELECTION_QA_SCHEMA } from "./schema-selection-qa";
 import { KEYWORD_INDEX_SCHEMA } from "./schema-index";
 import { SELECTION_QA_RUNTIME_SCHEMA } from "./schema-selection-qa-runtime";
 import { KEYWORD_INDEX_FILES_SCHEMA } from "./schema-index-files";
+import { SELECTION_QA_HISTORY_SCHEMA } from "./schema-selection-qa-history";
+import { SELECTION_QA_AUTONOMY_SCHEMA } from "./schema-selection-qa-autonomy";
+import { SELECTION_QA_QUALITY_SCHEMA } from "./schema-selection-qa-quality";
 import { createHash } from "node:crypto";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -33,7 +36,7 @@ describe("versioned SQLite schema", () => {
     expect(db.prepare("PRAGMA table_info(selection_qa_conversations)").all().some(column => column.name === "history_excerpt_json")).toBe(true);
     expect(db.prepare("SELECT question,answer FROM selection_qa_turns WHERE id='answer'").get()).toEqual(saved);
     initializeSchema(db); initializeSchema(db);
-    expect(db.prepare("SELECT max(version) v FROM schema_migrations").get()!.v).toBe(8);
+    expect(db.prepare("SELECT max(version) v FROM schema_migrations").get()!.v).toBe(11);
     expect(db.prepare("PRAGMA table_info(selection_qa_conversations)").all().some(column => column.name === "history_excerpt_json")).toBe(false);
     expect(db.prepare("SELECT question,answer FROM selection_qa_turns WHERE id='answer'").get()).toEqual(saved);
     expect(db.prepare("PRAGMA foreign_key_check").all()).toEqual([]);
@@ -76,9 +79,9 @@ describe("versioned SQLite schema", () => {
     expect(snapshotLegacy(db)).toEqual(before);
     initializeSchema(db);
     initializeSchema(db);
-    expect(db.prepare("SELECT max(version) v FROM schema_migrations").get()!.v).toBe(8);
+    expect(db.prepare("SELECT max(version) v FROM schema_migrations").get()!.v).toBe(11);
     expect(db.prepare("PRAGMA table_info(selection_qa_turns)").all()).toEqual(
-      expect.arrayContaining([expect.objectContaining({ name: "protocol_repair_call_count", notnull: 1, dflt_value: "0" })]),
+      expect.arrayContaining([expect.objectContaining({ name: "model_call_count", notnull: 1, dflt_value: "0" })]),
     );
     expect(snapshotLegacy(db)).toEqual(before);
   });
@@ -117,9 +120,9 @@ describe("versioned SQLite schema", () => {
     initializeSchema(db);
     expect(
       db.prepare("SELECT COUNT(*) n FROM schema_migrations").get()!.n,
-    ).toBe(8);
+    ).toBe(11);
     expect(db.prepare("PRAGMA table_info(selection_qa_turns)").all()).toEqual(
-      expect.arrayContaining([expect.objectContaining({ name: "protocol_repair_call_count", notnull: 1, dflt_value: "0" })]),
+      expect.arrayContaining([expect.objectContaining({ name: "model_call_count", notnull: 1, dflt_value: "0" })]),
     );
   });
   it("preserves legacy users and schema_version=1 tasks during upgrade", () => {
@@ -226,6 +229,26 @@ describe("versioned SQLite schema", () => {
     expect(() => initializeSchema(db)).toThrow("Unsupported SQLite schema");
   });
 
+  it("F2 migration 11 keeps every published unigram file record and its chunks, then admits dual files", () => {
+    const history = [BASELINE_SCHEMA, SELECTION_QA_SCHEMA, KEYWORD_INDEX_SCHEMA, SELECTION_QA_RUNTIME_SCHEMA, KEYWORD_INDEX_FILES_SCHEMA, SELECTION_QA_REPAIR_BUDGET_SCHEMA, AUTH_SESSIONS_SCHEMA, SELECTION_QA_HISTORY_SCHEMA, SELECTION_QA_AUTONOMY_SCHEMA, SELECTION_QA_QUALITY_SCHEMA];
+    db.exec(history.join("\n")); seedUpgradeFixture(db);
+    db.exec("CREATE TABLE schema_migrations(version INTEGER PRIMARY KEY,checksum TEXT NOT NULL,applied_at INTEGER NOT NULL)");
+    history.forEach((sql, index) => db.prepare("INSERT INTO schema_migrations VALUES(?,?,?)").run(index + 1, createHash("sha256").update(sql).digest("hex"), 1));
+    const artifact = db.prepare("SELECT artifact_id,user_id,book_id,checksum FROM book_artifacts LIMIT 1").get() as { artifact_id: string; user_id: number; book_id: number; checksum: string };
+    db.prepare(`INSERT INTO content_index_generations(id,identity_key,user_id,book_id,artifact_id,file_checksum,extractor_version,normalization_version,chunker_version,tokenizer_version,state,owner_token,chunk_count,created_at,updated_at)
+      VALUES('11111111-1111-1111-1111-111111111111','key',?,?,?,?,'e','n','c','t','ready','o',1,1,1)`).run(artifact.user_id, artifact.book_id, artifact.artifact_id, artifact.checksum);
+    db.prepare("INSERT INTO content_index_files(generation_id,format,sha256,byte_count) VALUES(?,'unigram-file-v1',?,10)").run("11111111-1111-1111-1111-111111111111", "a".repeat(64));
+    db.prepare(`INSERT INTO content_index_position_chunks(generation_id,user_id,book_id,ordinal,section_index,href,start_offset,end_offset,quote,quote_hash,displayed_quote,cfi,tokens)
+      VALUES('11111111-1111-1111-1111-111111111111',?,?,0,0,'c.xhtml',0,2,'证据','h','证据','epubcfi(/6/2!/4)','t1')`).run(artifact.user_id, artifact.book_id);
+    const before = { files: db.prepare("SELECT * FROM content_index_files").all(), chunks: db.prepare("SELECT * FROM content_index_position_chunks").all() };
+    initializeSchema(db);
+    expect(db.prepare("SELECT max(version) v FROM schema_migrations").get()!.v).toBe(11);
+    expect(db.prepare("SELECT generation_id,format,sha256,byte_count FROM content_index_files").all()).toEqual(before.files.map(({ generation_id, format, sha256, byte_count }: any) => ({ generation_id, sha256, byte_count, format })));
+    expect(db.prepare("SELECT * FROM content_index_position_chunks").all()).toEqual(before.chunks);
+    db.prepare("UPDATE content_index_files SET format='dual-file-v1'").run();
+    expect(() => db.prepare("UPDATE content_index_files SET format='other'").run()).toThrow();
+    expect(db.prepare("PRAGMA foreign_key_check").all()).toEqual([]);
+  });
   it("upgrades a valid historical ledger prefix", () => {
     db.exec(BASELINE_SCHEMA);
     db.exec(
@@ -237,7 +260,7 @@ describe("versioned SQLite schema", () => {
     initializeSchema(db);
     expect(
       db.prepare("SELECT COUNT(*) n FROM schema_migrations").get()!.n,
-    ).toBe(8);
+    ).toBe(11);
   });
   it("rejects changed checksum, a future version, and a noncontiguous ledger", () => {
     initializeSchema(db);

@@ -1,4 +1,4 @@
-import type { ContentRevision } from '../../ai-reading/model/aiReading';
+import type { ContentRevision } from './contentRevision';
 export const BOOK_READING_GENRES = [
     'technical',
     'argumentation',

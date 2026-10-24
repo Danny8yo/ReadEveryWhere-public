@@ -11,6 +11,7 @@ import type { IndexIdentity } from "../application/ports/keyword-index.port";
 import type { EpubIndexChunk } from "@readeverywhere/epub-core/node";
 
 const identity: IndexIdentity = {
+  format: "unigram-file-v1",
   userId: 1,
   bookId: 1,
   key: "identity",
@@ -320,9 +321,12 @@ describe("keyword index atomic generations", () => {
     );
     const worker: KeywordIndexWorker = {
       version: identity.version,
+      format: "unigram-file-v1",
+      plan: () => { throw new Error("unused"); },
       build,
       queries: () => [["t123"]],
       replay: async () => [],
+      ranges: async () => { throw new Error("unused"); },
       candidatesReplay: async () => [],
       expand: async () => [],
       context: async () => {
@@ -388,6 +392,8 @@ describe("keyword index atomic generations", () => {
     const service = (version: typeof oldVersion, isNew: boolean) => {
       const worker: KeywordIndexWorker = {
         version,
+        format: "unigram-file-v1",
+        plan: () => { throw new Error("unused"); },
         build: async (_bytes, batch) => {
           await batch([chunk]);
           if(isNew && fail) throw new Error("INDEX_RESOURCE_LIMIT: injected upgrade failure");
@@ -397,6 +403,7 @@ describe("keyword index atomic generations", () => {
           expect(selected).toHaveLength(1);expect(selected[0].quoteHash).toBe(chunk.quoteHash);return [chunk];
         },
         candidatesReplay: async () => { throw new Error("unused"); },
+        ranges: async () => { throw new Error("unused"); },
         expand: async (_bytes, _scope, selected) => {
           expect(selected).toHaveLength(1);
           expect(selected[0].quoteHash).toBe(chunk.quoteHash);

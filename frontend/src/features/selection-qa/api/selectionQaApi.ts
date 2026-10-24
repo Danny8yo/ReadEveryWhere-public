@@ -2,11 +2,12 @@ import {
   request,
   fetchWithAuth,
   resolveBackendUrl,
-} from "../../../services/apiClient";
+} from "../../../shared/web/apiClient";
 import { listAnnotations } from "../../reader/api/annotationApi";
 import type { QaApi, QaEvent } from "../model/selectionQa";
 const base = "/api/v1/selection-qa";
 const id = encodeURIComponent;
+const protocolHeaders = { "X-Selection-QA-Protocol": "2" };
 export const selectionQaApi: QaApi = {
   conversations: (bookId, cursor) =>
     request(`${base}/conversations`, {
@@ -25,7 +26,7 @@ export const selectionQaApi: QaApi = {
         : command.kind === "turn"
           ? `${base}/conversations/${id(command.conversationId)}/turns`
           : `${base}/turns/${id(command.turnId)}/apply-annotation`,
-      { method: "POST", body: JSON.stringify(command.body) },
+      { headers: protocolHeaders, method: "POST", body: JSON.stringify(command.body) },
     ),
   receipt: (commandId) =>
     request(`/api/v1/annotations/commands/${id(commandId)}`),
@@ -51,7 +52,7 @@ export const selectionQaApi: QaApi = {
             `${base}/turns/${id(turnId)}/events?afterSequence=${after}`,
           ),
           {
-            headers: { Accept: "text/event-stream" },
+            headers: { ...protocolHeaders, Accept: "text/event-stream" },
             signal: controller.signal,
           },
         );

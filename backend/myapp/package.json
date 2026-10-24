@@ -25,7 +25,7 @@
     "@nestjs/platform-express": "^11.1.19",
     "@nestjs/throttler": "^6.5.0",
     "@readeverywhere/epub-core": "file:../../packages/epub-core",
-    "adm-zip": "^0.5.17",
+    "adm-zip": "^0.6.1",
     "bcryptjs": "^3.0.3",
     "better-sse": "0.16.1",
     "cheerio": "^1.2.0",
@@ -44,7 +44,6 @@
   },
   "devDependencies": {
     "@nestjs/testing": "^11.1.19",
-    "@types/adm-zip": "^0.5.8",
     "@types/express": "^5.0.6",
     "@types/jest": "^30.0.0",
     "@types/multer": "^2.1.0",

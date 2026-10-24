@@ -1,13 +1,15 @@
 import type { ZlibraryConfig } from '../model/zlibrary';
 import type { DoubanConfig } from '../model/douban';
-import type { AiModelConfig, TestAiModelConfigResult } from '../../ai-reading/model/aiReading';
-import type { SaveZlibraryConfigPayload, ImportZlibraryCookiesPayload } from '../model/zlibrary';
-import type { ReadingConversationGateway } from '../../ai-reading/domain/ports';
+import type { AiModelConfig, TestAiModelConfigResult } from '../model/aiModel';
+import type { SaveZlibraryConfigPayload, ImportZlibraryCookiesPayload, ZlibraryProbeResult, ZlibraryDiscoveryResult } from '../model/zlibrary';
+import type { AiModelGateway } from './AiModelGateway';
 import { errorMessage } from '../../../shared/domain/errors';
 interface ZlibraryGateway {
     getConfig(): Promise<ZlibraryConfig>;
     saveConfig(input: SaveZlibraryConfigPayload): Promise<ZlibraryConfig>;
     importCookies(input: ImportZlibraryCookiesPayload): Promise<ZlibraryConfig>;
+    probe(url: string): Promise<ZlibraryProbeResult>;
+    discoverDomains(baseUrl: string): Promise<ZlibraryDiscoveryResult>;
     updateBaseUrl(url: string): Promise<{
         baseUrl: string;
     }>;
@@ -47,11 +49,17 @@ export function createSettingsState() {
             apiKey: '',
         },
         configError: null as string | null,
+        probeResult: null as ZlibraryProbeResult | null,
+        probeError: null as string | null,
+        probing: false,
+        candidates: [] as ZlibraryDiscoveryResult['candidates'],
+        discovering: false,
+        discoveryError: null as string | null,
     };
 }
 export function createSettingsController(state: ReturnType<typeof createSettingsState>, zlibraryApi: ZlibraryGateway, doubanApi: {
     getConfig(): Promise<DoubanConfig>;
-}, aiReadingApi: Pick<ReadingConversationGateway, 'getModelConfig' | 'saveModelConfig' | 'testModelConfig' | 'deleteModelConfig'>, notify: (message: string) => void) {
+}, aiModelApi: AiModelGateway, notify: (message: string) => void) {
     const fetchConfig = async () => {
         try {
             const data = await zlibraryApi.getConfig();
@@ -79,6 +87,21 @@ export function createSettingsController(state: ReturnType<typeof createSettings
         finally {
             state.savingUrl = false;
         }
+    };
+    const handleProbeBaseUrl = async () => {
+        state.probing = true;
+        state.probeResult = null;
+        state.probeError = null;
+        try { state.probeResult = await zlibraryApi.probe(state.form.baseUrl); }
+        catch (err: any) { state.probeError = err?.message || '检测请求失败'; notify('检测失败: ' + state.probeError); }
+        finally { state.probing = false; }
+    };
+    const handleDiscoverDomains = async () => {
+        state.discovering = true;
+        state.discoveryError = null;
+        try { state.candidates = (await zlibraryApi.discoverDomains(state.form.baseUrl)).candidates; }
+        catch (err: any) { const message = err?.message || '候选域名发现失败'; state.discoveryError = message; notify(message); }
+        finally { state.discovering = false; }
     };
     const handleSave = async () => {
         state.saving = true;
@@ -137,7 +160,7 @@ export function createSettingsController(state: ReturnType<typeof createSettings
     };
     const fetchAiConfig = async () => {
         try {
-            state.aiConfig = await aiReadingApi.getModelConfig();
+            state.aiConfig = await aiModelApi.getModelConfig();
             state.aiForm.modelId = state.aiConfig.modelId || 'deepseek-v4-flash';
             state.aiConfigError = null;
         }
@@ -154,7 +177,7 @@ export function createSettingsController(state: ReturnType<typeof createSettings
         state.aiConfigError = null;
         state.aiTestResult = null;
         try {
-            state.aiTestResult = await aiReadingApi.testModelConfig(aiPayload());
+            state.aiTestResult = await aiModelApi.testModelConfig(aiPayload());
         }
         catch (err: any) {
             state.aiConfigError = err?.message || '连接测试失败';
@@ -167,7 +190,7 @@ export function createSettingsController(state: ReturnType<typeof createSettings
         state.savingAiConfig = true;
         state.aiConfigError = null;
         try {
-            state.aiConfig = await aiReadingApi.saveModelConfig(aiPayload());
+            state.aiConfig = await aiModelApi.saveModelConfig(aiPayload());
             state.aiForm.apiKey = '';
             state.aiTestResult = null;
         }
@@ -182,7 +205,7 @@ export function createSettingsController(state: ReturnType<typeof createSettings
         state.deletingAiConfig = true;
         state.aiConfigError = null;
         try {
-            await aiReadingApi.deleteModelConfig();
+            await aiModelApi.deleteModelConfig();
             state.aiForm.apiKey = '';
             state.aiTestResult = null;
             await fetchAiConfig();
@@ -194,5 +217,5 @@ export function createSettingsController(state: ReturnType<typeof createSettings
             state.deletingAiConfig = false;
         }
     };
-    return { fetchConfig, applyZlibraryConfig, handleSaveBaseUrl, handleSave, handleDeleteZlibraryConfig, fetchDoubanConfig, fetchAiConfig, aiPayload, handleTestAiConfig, handleSaveAiConfig, handleDeleteAiConfig };
+    return { fetchConfig, applyZlibraryConfig, handleSaveBaseUrl, handleProbeBaseUrl, handleDiscoverDomains, handleSave, handleDeleteZlibraryConfig, fetchDoubanConfig, fetchAiConfig, aiPayload, handleTestAiConfig, handleSaveAiConfig, handleDeleteAiConfig };
 }

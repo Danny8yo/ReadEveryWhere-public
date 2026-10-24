@@ -15,6 +15,11 @@ export function toIdentityHttpError(error: unknown): unknown {
       return AppException.forbidden(error.message);
     case "not_found":
       return AppException.notFound(error.field, error.message);
+    case "rate_limited":
+      return new AppException(429, 42901, error.message, {
+        reason: "LOGIN_TEMPORARILY_LOCKED",
+        recovery: { retryAfterSeconds: error.retryAfterSeconds },
+      });
   }
 }
 

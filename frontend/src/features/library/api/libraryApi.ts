@@ -4,9 +4,9 @@ import { mapLibraryBook } from './mappers';
 import type { LibraryBookDto } from './dto';
 import type { ImportBookResult } from '../model/library';
 import type { LibraryBook, BatchImportBookResult, LibraryListResponse, AddBookManualParams, AddFromSearchParams } from '../model/library';
-import { request, requestFormData } from '../../../services/apiClient';
+import { request, requestFormData } from '../../../shared/web/apiClient';
 import type { BookReadingGenre, FormalBookReadingProfile } from '../../metadata/model/bookAnalysis';
-import type { EbookFormat } from '../../../utils/bookFormat';
+import type { EbookFormat } from '../../../shared/utils/bookFormat';
 export const fetchLibraryBooks = (params: {
     page?: number;
     pageSize?: number;

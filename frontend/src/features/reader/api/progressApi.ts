@@ -1,5 +1,5 @@
 import type {ProgressLocationType,ReadingProgressRecord,UpsertProgressParams} from '../model/progress';
-import { request } from "../../../services/apiClient";
+import { request } from "../../../shared/web/apiClient";
 
 
 

@@ -138,7 +138,7 @@ describe("selection QA real HTTP JSON body limit", () => {
 
   it("rejects a question beyond 4000 UTF16 despite fewer Unicode codepoints", async () => {
     await request(app.getHttpServer())
-      .post("/api/v1/selection-qa/conversations/conv/turns")
+      .post("/api/v1/selection-qa/conversations/conv/turns").set("X-Selection-QA-Protocol", "2")
       .send({ commandId: "question", question: "😀".repeat(2000) + "a" })
       .expect(400);
   });

@@ -17,6 +17,8 @@
 
 所有认证响应不缓存。`GET /session` 与 `/registration-status` 不参与认证 Controller 的 10 分钟 5 次限流。其余认证操作保留原有节流。
 
+登录另按账号（规范化邮箱）计数：15 分钟内失败 10 次即锁定该账号 15 分钟，锁定期间即使密码正确也返回 HTTP429/code42901/details.reason=LOGIN_TEMPORARILY_LOCKED，`details.recovery.retryAfterSeconds` 为剩余秒数，message 为可直接展示的中文提示。不存在的邮箱按同一规则计数与锁定；登录成功清零。计数保存在进程内存（后端单副本），重启后清零。按 IP 的限流依赖反向代理在 `X-Forwarded-For` 中传入真实访客 IP，后端 `trust proxy 1` 读取最后一段。
+
 所有写请求（包含登录和注册）必须携带 Origin，且等于请求自身 origin 或 `CORS_ORIGIN` 中显式配置的 origin；缺失、null、不可信 Origin 返回 403。无通配符授权。CORS 开启 credentials。AI Token 的只读 Bearer 链路保持独立。SameSite=Lax 不支持任意跨站 Cookie 嵌入；Web 推荐同源代理，局域网跨端口需要显式配置前端 origin。
 
 公开注册由 `REGISTRATION_ENABLED` 控制，未配置时生产关闭、其他环境开启；只允许 true/false。关闭时注册 Guard 在 DTO 前返回 HTTP403/code40301/details.reason=REGISTRATION_DISABLED。

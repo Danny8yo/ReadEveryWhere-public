@@ -1,6 +1,6 @@
 import { once } from "node:events";
 import { chunkSection, CHUNKER_VERSION, surroundingRange, structureUnits } from "./chunks.js";
-import { tokenizeKeywords, TOKENIZER_VERSION } from "./keywords.js";
+import { tokenizeKeywords, tokenizeBigrams, tokenizeWords, TOKENIZER_VERSION, DUAL_TOKENIZER_VERSION } from "./keywords.js";
 import * as CFI from "./foliate/epubcfi.js";
 import { parentPort, workerData } from "node:worker_threads";
 import { JSDOM } from "jsdom";
@@ -34,6 +34,9 @@ for (const name of [
   globalThis[name] = host.window[name];
 try {
   const action = workerData.selection?.action;
+  const streams = action === "index" ? workerData.selection.streams : undefined;
+  if (action === "index" && streams !== "char" && streams !== "dual") throw new Error("Index build requires streams char or dual");
+  const dualStreams = streams === "dual";
   const preserveAllHits = action === "expand" && workerData.selection.preserveAllHits === true;
   let preservedCaps;
   if (preserveAllHits) {
@@ -115,8 +118,10 @@ try {
       );
   }
   const sections = [],
-    replayed = [];
+    replayed = [],
+    rangeGaps = [];
   let expandedHitCount = 0;
+  let processedExactRanges = 0;
   let chunkCount = 0,
     batch = [],
     unavailable = [];
@@ -135,7 +140,7 @@ try {
       throw new Error(`Missing EPUB spine resource: ${section.id}`);
     // A local selection/read must not allocate DOM/source maps for the whole book.
     if (selection && sectionIndex !== selection.expectedScope.sectionIndex) continue;
-    if ((action === "replay" || action === "context" || action === "expand") &&
+    if ((action === "replay" || action === "context" || action === "ranges" || action === "expand") &&
         !workerData.selection.ranges.some(r => r.sectionIndex === sectionIndex)) continue;
     const document = parseChapter(
       archive.text(section.id, section.mediaType),
@@ -205,6 +210,10 @@ try {
           ordinal: chunkCount++,
           quoteHash: createHash("sha256").update(chunk.quote).digest("hex"),
           tokens,
+          ...(dualStreams ? {
+            bigramTokens: tokenizeBigrams(chunk.quote).join(" "),
+            wordTokens: tokenizeWords(chunk.quote, "index").join(" "),
+          } : {}),
         });
         if (batch.length >= 16) await flush();
       }
@@ -286,7 +295,7 @@ try {
       replayed.push(...windows);
       continue;
     }
-    if (action === "replay" || action === "context") {
+    if (action === "replay" || action === "context" || action === "ranges") {
       if (requestedScope.normalizationVersion !== NORMALIZATION_VERSION)
         throw new LocationError("VERSION_MISMATCH", "normalization");
       for (const input of workerData.selection.ranges.filter(
@@ -295,7 +304,36 @@ try {
         if (input.href !== section.href)
           throw new LocationError("SCOPE_MISMATCH", "href");
         let { start, end } = input;
+        if (start < 0 || end <= start || end > map.text.length)
+          throw new LocationError("RANGE_OUT_OF_BOUNDS", "invalid exact reading range");
         let contextTruncated;
+        if (action === "ranges") {
+          processedExactRanges++;
+          // A chapter can start/end with synthetic image-alt or a normalized
+          // boundary. Retain its representable interior and report the exact
+          // excluded edges, rather than discard all real text in that chapter.
+          let safeStart, safeEnd;
+          for (let i = 0; i < map.segments.length; i++) {
+            const segment = map.segments.at(i);
+            const linear = Boolean(map.segments.data[i * 8 + 7] & 2);
+            if (segment.start) {
+              const point = linear ? Math.max(start, segment.canonicalStart) : segment.canonicalStart;
+              if (point >= start && point < end && point < segment.canonicalEnd && safeStart === undefined) safeStart = point;
+            }
+            if (segment.end) {
+              const point = linear ? Math.min(end, segment.canonicalEnd) : segment.canonicalEnd;
+              if (point <= end && point > start && point > segment.canonicalStart) safeEnd = point;
+            }
+          }
+          if (safeStart === undefined || safeEnd === undefined || safeEnd <= safeStart) {
+            rangeGaps.push({ sectionIndex, href: section.href, start, end, reason: "UNREPRESENTABLE_RANGE" });
+            continue;
+          }
+          if (safeStart > start) rangeGaps.push({ sectionIndex, href: section.href, start, end: safeStart, reason: "UNREPRESENTABLE_RANGE" });
+          if (safeEnd < end) rangeGaps.push({ sectionIndex, href: section.href, start: safeEnd, end, reason: "UNREPRESENTABLE_RANGE" });
+          contextTruncated = safeStart !== start || safeEnd !== end;
+          start = safeStart; end = safeEnd;
+        }
         if (action === "context") {
           if (end > map.text.length) throw new LocationError("RANGE_OUT_OF_BOUNDS", `chapter length is ${map.text.length}; requested end ${end}`);
           ({ start, end, contextTruncated } = surroundingRange(
@@ -306,8 +344,14 @@ try {
             document,
           ));
         }
-        const source = canonicalToSource(map, { start, end }),
-          range = rangeFromSource(document, source);
+        let source;
+        try { source = canonicalToSource(map, { start, end }); }
+        catch (error) {
+          if (action !== "ranges" || !(error instanceof LocationError) || error.code !== "UNREPRESENTABLE_RANGE") throw error;
+          rangeGaps.push({ sectionIndex, href: section.href, start, end, reason: error.code });
+          continue;
+        }
+        const range = rangeFromSource(document, source);
         const cfi = CFI.joinIndir(
           resources.cfis[sectionIndex],
           CFI.fromRange(range),
@@ -329,7 +373,7 @@ try {
           cfi,
           displayedQuote: range.toString(),
           source,
-          ...(action === "context" ? { contextTruncated } : {}),
+          ...(action === "context" || action === "ranges" ? { contextTruncated } : {}),
         });
       }
       continue;
@@ -386,7 +430,7 @@ try {
         chunkCount,
         unavailable,
         chunkerVersion: CHUNKER_VERSION,
-        tokenizerVersion: TOKENIZER_VERSION,
+        tokenizerVersion: dualStreams ? DUAL_TOKENIZER_VERSION : TOKENIZER_VERSION,
       },
     });
     host.window.close();
@@ -423,10 +467,10 @@ try {
     parentPort.postMessage({ result: output });
     host.window.close(); process.exit(0);
   }
-  if (action === "replay" || action === "context" || action === "expand") {
-    if (replayed.length !== workerData.selection.ranges.length)
+  if (action === "replay" || action === "context" || action === "ranges" || action === "expand") {
+    if ((action === "ranges" ? processedExactRanges : replayed.length) !== workerData.selection.ranges.length)
       throw new LocationError("SCOPE_MISMATCH", "missing resource");
-    parentPort.postMessage({ result: replayed });
+    parentPort.postMessage({ result: action === "ranges" ? { candidates: replayed, unavailable: rangeGaps } : replayed });
     host.window.close();
     process.exit(0);
   }

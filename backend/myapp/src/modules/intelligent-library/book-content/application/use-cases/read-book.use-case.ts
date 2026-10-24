@@ -1,3 +1,4 @@
+import type { ContentExecution } from "../ports/content-execution";
 import type { BookContentSourcePort } from "../ports/book-content-source.port";
 import type { BookDocument, EpubBookLocatorV1 } from "../../domain/book-document.types";
 import { ReaderToolException } from "../../domain/reader-tool-error";
@@ -21,11 +22,12 @@ export class ReadBookUseCase {
       direction?: "forward" | "backward" | "around";
       maxChars?: number;
     },
+    execution?: ContentExecution,
   ) {
     const locator = input.locator;
     const book = this.source.findOwnedBook(userId, locator.bookId);
     requireOwnedBook(book, "locator.bookId");
-    const document = await this.documentLoader.load(userId, locator.bookId);
+    const document = await this.documentLoader.load(userId, locator.bookId, execution);
     this.validateLocator(locator, document, "locator");
 
     const direction = input.direction ?? "forward";

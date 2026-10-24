@@ -1,7 +1,8 @@
 // Migration 7 replaces refresh_tokens with auth_sessions for fresh and existing databases.
-// Fresh base DDL; initializeSchema composes this with migrations 2–7.
+// Fresh base DDL; initializeSchema composes this with migrations 2–9.
 // Migration 5 adds position-file metadata/chunks to both fresh and existing databases.
 // Migration 6 adds the bounded selection-QA protocol-repair counter.
+// Migration 9 unifies model attempts and persists the final-delivery reservation.
 // Historical columns are declared directly.
 export const CURRENT_BASE_SCHEMA = `
       PRAGMA foreign_keys = ON;

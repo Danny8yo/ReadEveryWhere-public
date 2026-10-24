@@ -1,7 +1,8 @@
 import { ReadingStateEventBus } from "./reading-state-event-bus";
 
-describe("ReadingStateEventBus", () => {
-  it("delivers changes only to matching user and book subscribers", () => {
+// 编号对应 doc/同步测试用例审查.md
+describe("笔记变化分发（ReadingStateEventBus）", () => {
+  it("C1 笔记变化只通知同用户、同一本书的订阅者；取消订阅后不再收到", () => {
     const bus = new ReadingStateEventBus();
     const matching = jest.fn();
     const otherBook = jest.fn();

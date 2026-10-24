@@ -18,7 +18,7 @@
 
 响应包含可重放 Locator、Citation、分页/截断和边界信息。MCP 对外 Tool Schema 见 `backend/reader-tools-mcp/README.md` 与根目录 `doc/AI阅读助手/阶段0-Tool契约草案.md`；内部 DeepSeek Agent 的精简模型投影不改变这里的公共契约。
 
-`GET /books/:bookId/metadata` 的 `contentStats.tocQuality` 表示目录到正文的映射质量：`declared` 为原书目录可直接使用，`declared_repaired` 为声明目录的位置或层级已确定性修复，`spine_fallback` 为声明目录无法安全修复后退回 EPUB spine。当前抽取版本为 `epub-extractor-v4`：已有嵌套目录优先；完全扁平的声明目录只在节点可确定映射到正文 `h1…h6` 时按标题级别建树，不使用编号或 LLM 推断。详细来源与计数保存在内部 `BookDocument.tocProvenance` 并由 Inspector 展示；公共 `tocQuality` 仍保持三值。旧缓存、nodeId、Locator、continuation 和依赖旧 revision 的画像会自然失效。
+`GET /books/:bookId/metadata` 的 `contentStats.tocQuality` 表示目录到正文的映射质量：`declared` 为原书目录可直接使用，`declared_repaired` 为声明目录的位置或层级已确定性修复，`spine_fallback` 为声明目录无法安全修复后退回 EPUB spine。当前抽取版本为 `epub-extractor-v5`，规范化为epub-source-map-v2，共享Foliate核心与前端同源：已有嵌套目录优先；完全扁平的声明目录只在节点可确定映射到正文 `h1…h6` 时按标题级别建树，不使用编号或 LLM 推断。详细来源与计数保存在内部 `BookDocument.tocProvenance` 并由 Inspector 展示；公共 `tocQuality` 仍保持三值。旧缓存、nodeId、Locator、continuation 和依赖旧 revision 的画像会自然失效。
 
 TOC `navigation` 视图为每个选中节点返回完整公共 `startLocator` 和 `endLocator`。`startLocator + direction=forward` 从章首读取；`endLocator + direction=backward` 可直接读取章尾。两者都是导航点，正文证据仍以随后 `book_read` 返回的 `read_context` Citation 为准。
 
@@ -41,3 +41,9 @@ TOC `navigation` 视图为每个选中节点返回完整公共 `startLocator` �
 - `segments[]`，每项含拼接后 `text` 内的 UTF-16 `[textStart,textEnd)` 和该 section 连续片段唯一的 `citation`。跨 section 读取不会伪造一个覆盖多 section 的单数 Locator。
 
 上述顶层裸 Locator、reached 字段和 boundary 仅属于 `book_read`；目录批次只在 units 内给出边界。两种读取的 Citation 都只证明对应 segment 的已读正文。MCP 目录读取显式传 bookId，内部单书 Agent 的 BookScope 在服务端注入。
+
+## 选区问答结构能力边界
+
+既有Reader Tools REST/MCP路由和完整目录单元/continuation契约保持；新问答的book_toc、book_read_from_toc、book_read_node是SelectionQA自有模型工具，消费IntelligentLibrary公开BookStructuredContentPort，不新增同名REST路由。前者经outline分页取得长目录，后两者完成强证据桥接及明确节点续读；不能把旧字符Locator/TextQuote直接当作问答完整CFI证据。
+
+BookContent范围归属现按跨section节点边界及最深包含节点计算；问答的结构请求贯穿signal/deadline，CONTENT_CANCELLED映射409/40916，期限沿INDEX_DEADLINE映射408/40811。无问答会话覆盖状态进入BookContent；单次返回、跨调用覆盖与语义充分性分开。

@@ -9,6 +9,14 @@ export type AnnotationConflict = {
         kind: "delete";
     };
 };
+/** 要修改的笔记已在其他设备删除：没有服务器版本，只保留编辑稿供复制或另存。 */
+export type AnnotationDeletedRemotely = {
+    current: null;
+    attempted: {
+        kind: "update";
+        edits: AnnotationEdits;
+    };
+};
 interface AnnotationGateway {
     create(params: CreateAnnotationParams): Promise<Annotation>;
     update(id: string, params: UpdateAnnotationParams): Promise<Annotation>;
@@ -20,9 +28,9 @@ export function createAnnotationsState() {
     return {
         annotations: [] as Annotation[],
         loading: false,
-        syncStatus: "idle" as "idle" | "syncing" | "synced" | "failed" | "conflict",
+        syncStatus: "idle" as "idle" | "syncing" | "synced" | "failed" | "conflict" | "deleted-remotely",
         lastError: null as unknown,
-        conflict: null as AnnotationConflict | null,
+        conflict: null as AnnotationConflict | AnnotationDeletedRemotely | null,
     };
 }
 export function createAnnotationsController(state: ReturnType<typeof createAnnotationsState>, api: AnnotationGateway) {
@@ -94,6 +102,7 @@ export function createAnnotationsController(state: ReturnType<typeof createAnnot
     }
     function handleConflict(error: unknown, attempted: AnnotationConflict["attempted"]) {
         const payload = error as {
+            code?: number;
             details?: {
                 reason?: string;
                 current?: Annotation;
@@ -102,6 +111,10 @@ export function createAnnotationsController(state: ReturnType<typeof createAnnot
         if (payload.details?.reason === "ANNOTATION_CONFLICT" && payload.details.current) {
             state.conflict = { current: payload.details.current, attempted };
             state.syncStatus = "conflict";
+        }
+        else if (attempted.kind === "update" && payload.code === 40401) {
+            state.conflict = { current: null, attempted };
+            state.syncStatus = "deleted-remotely";
         }
         else {
             state.syncStatus = "failed";
@@ -112,18 +125,21 @@ export function createAnnotationsController(state: ReturnType<typeof createAnnot
         if (!state.conflict)
             return;
         const current = state.conflict.current;
-        const index = state.annotations.findIndex((annotation) => annotation.id === current.id);
-        if (index >= 0)
-            state.annotations[index] = current;
-        else
-            state.annotations.push(current);
+        // 已在其他设备删除时服务器没有版本可用：丢弃编辑稿，列表由快照收敛。
+        if (current) {
+            const index = state.annotations.findIndex((annotation) => annotation.id === current.id);
+            if (index >= 0)
+                state.annotations[index] = current;
+            else
+                state.annotations.push(current);
+        }
         state.conflict = null;
         state.syncStatus = "synced";
         state.lastError = null;
     }
     function prepareConflictRetry(): AnnotationConflict | null {
         const pendingConflict = state.conflict;
-        if (!pendingConflict)
+        if (!pendingConflict?.current)
             return null;
         replaceAnnotation(pendingConflict.current);
         state.conflict = null;

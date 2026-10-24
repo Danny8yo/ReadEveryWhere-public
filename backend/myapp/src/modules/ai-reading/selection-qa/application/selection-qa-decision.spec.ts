@@ -1,4 +1,4 @@
-import { finishResearchToolFor, MAX_INFORMATION_NEEDS, parseDecision, projectDecisionEvidence } from "./selection-qa-decision";
+import { finishResearchToolFor, MAX_INFORMATION_NEEDS, parseDecision } from "./selection-qa-decision";
 import type { QaSavedEvidence } from "./selection-qa-runtime.port";
 
 const owned = new Map([["e_current", { evidenceId: "e_current" } as QaSavedEvidence]]);
@@ -22,36 +22,33 @@ describe("selection QA source-targeted research decision", () => {
     expect(parsed.informationNeeds[2]).toMatchObject({ targetSource: "other_book_unverified", evidenceIds: [] });
   });
 
-  it("accepts broad needs and deterministically projects their shared evidence budget", () => {
+  it("preserves selected evidence across needs without an implicit expansion projection", () => {
     const passages = new Map(Array.from({ length: 16 }, (_, index) => [`e_${index}`, { evidenceId: `e_${index}` } as QaSavedEvidence]));
-    expect(parseDecision(decision([need("current_book", ["e_0", "e_1"])]), passages).selectedEvidenceIds).toEqual(["e_0", "e_1"]);
     const parsed = parseDecision(decision([
       need("current_book", Array.from({ length: 8 }, (_, index) => `e_${index}`)),
       need("current_book", Array.from({ length: 8 }, (_, index) => `e_${index + 8}`)),
     ]), passages);
-    const withQuotes = new Map([...passages].map(([id, item]) => [id, { ...item, quote: id } as QaSavedEvidence]));
-    const projected = projectDecisionEvidence(parsed, withQuotes, new Set(passages.keys()), 10_000);
-    expect(projected.decision.selectedEvidenceIds).toEqual(Array.from({ length: 12 }, (_, index) => `e_${index}`));
-    expect(projected.omittedEvidenceIds).toEqual(["e_12", "e_13", "e_14", "e_15"]);
-    expect(projected.decision.informationNeeds[1].evidenceIds).toEqual(["e_8", "e_9", "e_10", "e_11"]);
+    expect(parsed.selectedEvidenceIds).toEqual([...passages.keys()]);
+    expect(parsed.informationNeeds[1].evidenceIds).toEqual([...passages.keys()].slice(8));
   });
-
-  it("keeps initial context outside the retrieved-candidate count and enforces the character budget", () => {
-    const passages = new Map([
-      ["selection", { evidenceId: "selection", quote: "选文" } as QaSavedEvidence],
-      ["long", { evidenceId: "long", quote: "123456" } as QaSavedEvidence],
-      ["short", { evidenceId: "short", quote: "1234" } as QaSavedEvidence],
-    ]);
-    const parsed = parseDecision(decision([need("current_book", ["selection", "long", "short"])]), passages);
-    const projected = projectDecisionEvidence(parsed, passages, new Set(["long", "short"]), 4);
-    expect(projected.decision.selectedEvidenceIds).toEqual(["selection", "short"]);
-    expect(projected.omittedEvidenceIds).toEqual(["long"]);
-    expect(projected.selectedCandidateChars).toBe(4);
+  it("enforces each need's declared evidence-array bound", () => {
+    const ids = Array.from({ length: 13 }, (_, i) => `e_${i}`);
+    const passages = new Map(ids.map(id => [id, { evidenceId: id } as QaSavedEvidence]));
+    expect(() => parseDecision(decision([need("current_book", ids)]), passages))
+      .toThrow(expect.objectContaining({ code: "TOOL_ARGUMENTS_INVALID" }));
   });
 
   it("bounds the number of semantic needs independently from evidence budgeting", () => {
     const tooMany = Array.from({ length: MAX_INFORMATION_NEEDS + 1 }, () => need("model_knowledge"));
     expect(() => parseDecision(decision(tooMany), owned)).toThrow(expect.objectContaining({ code: "TOOL_ARGUMENTS_INVALID" }));
+  });
+
+  it("identifies the exact oversized need field so the model can repair it", () => {
+    expect(() => parseDecision(decision([
+      need("model_knowledge"), { ...need("model_knowledge"), text: "长".repeat(230) },
+    ]), owned)).toThrow(expect.objectContaining({ code: "TOOL_ARGUMENTS_INVALID", current: {
+      field: "informationNeeds[1].text", constraint: "length", actual: 230, minimum: 1, maximum: 200,
+    } }));
   });
 
   it.each([
@@ -61,6 +58,7 @@ describe("selection QA source-targeted research decision", () => {
     ["external book lacks name", [need("other_book_unverified")], "TOOL_ARGUMENTS_INVALID"],
     ["duplicate IDs", [need("current_book", ["e_current", "e_current"])], "TOOL_ARGUMENTS_INVALID"],
     ["foreign ID", [need("current_book", ["e_foreign"])], "EVIDENCE_INVALID"],
+    ["foreign ID hidden behind a wrong source target", [need("model_knowledge", ["e_foreign"])], "EVIDENCE_INVALID"],
   ])("rejects %s", (_label, needs, code) => {
     expect(() => parseDecision(decision(needs), owned)).toThrow(expect.objectContaining({ code }));
   });

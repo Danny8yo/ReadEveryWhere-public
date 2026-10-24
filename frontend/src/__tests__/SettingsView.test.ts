@@ -1,7 +1,8 @@
 // @vitest-environment happy-dom
-import { flushPromises, mount, type VueWrapper } from '@vue/test-utils';
-import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
-import type { Component } from 'vue';
+import { enableAutoUnmount, flushPromises, mount, type VueWrapper } from '@vue/test-utils';
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import { nextTick, type Component } from 'vue';
+import { toasts } from '../shared/web/toast';
 
 const mocks = vi.hoisted(() => ({
   getZlibraryConfig: vi.fn(),
@@ -28,15 +29,15 @@ vi.mock('../features/settings/api/zlibraryApi', () => ({
 vi.mock('../features/settings/api/doubanApi', () => ({
   doubanApi: { getConfig: mocks.getDoubanConfig },
 }));
-vi.mock('../features/ai-reading/api/aiReadingApi', () => ({
-  aiReadingApi: {
+vi.mock('../features/settings/api/aiModelApi', () => ({
+  aiModelApi: {
     getModelConfig: mocks.getAiConfig,
     deleteModelConfig: mocks.deleteAiConfig,
     saveModelConfig: mocks.saveAiConfig,
     testModelConfig: mocks.testAiConfig,
   },
 }));
-vi.mock('../composables/useAuth', async () => {
+vi.mock('../features/auth/web/useAuth', async () => {
   const { ref } = await import('vue');
   return {
     useAuth: () => ({
@@ -57,6 +58,19 @@ const zlibraryConfig = (hasStoredConfig: boolean, baseUrl: string | null = 'http
   lastLoginAt: null,
   loginStatus: 'pending' as const,
 });
+
+// 封面流 P7：删除确认改为页面内弹窗（Teleport 到 body），提示改为页面内 toast
+enableAutoUnmount(afterEach);
+async function answerDeleteDialog(accept: boolean) {
+  await nextTick(); await nextTick();
+  const dialog = document.body.querySelector('[role="dialog"]');
+  if (!dialog) throw new Error('没有出现删除确认框');
+  const button = [...dialog.querySelectorAll('button')].find((candidate) => candidate.textContent?.trim() === (accept ? '删除' : '取消'));
+  if (!button) throw new Error('确认框里找不到按钮');
+  button.click();
+  await flushPromises();
+}
+const toastShown = (message: string) => toasts.items.some((item) => item.message === message);
 
 function buttonByText(wrapper: VueWrapper, label: string) {
   const button = wrapper.findAll('button').find((candidate) => candidate.text().includes(label));
@@ -96,11 +110,11 @@ describe('SettingsView 配置删除', () => {
   });
 
   it('AI 删除取消确认时不发送请求', async () => {
-    vi.mocked(window.confirm).mockReturnValue(false);
     const wrapper = mount(SettingsView);
     await flushPromises();
     await buttonByText(wrapper, 'AI 阅读').trigger('click');
     await buttonByText(wrapper, '删除配置').trigger('click');
+    await answerDeleteDialog(false);
     expect(mocks.deleteAiConfig).not.toHaveBeenCalled();
   });
 
@@ -118,7 +132,7 @@ describe('SettingsView 配置删除', () => {
     await flushPromises();
     await buttonByText(wrapper, 'AI 阅读').trigger('click');
     await buttonByText(wrapper, '删除配置').trigger('click');
-    await flushPromises();
+    await answerDeleteDialog(true);
 
     expect(mocks.deleteAiConfig).toHaveBeenCalledTimes(1);
     expect(mocks.getAiConfig).toHaveBeenCalledTimes(2);
@@ -132,7 +146,7 @@ describe('SettingsView 配置删除', () => {
     await flushPromises();
     await buttonByText(wrapper, 'AI 阅读').trigger('click');
     await buttonByText(wrapper, '删除配置').trigger('click');
-    await flushPromises();
+    await answerDeleteDialog(true);
 
     expect(wrapper.text()).toContain('delete rejected');
     expect(wrapper.text()).toContain('删除配置');
@@ -140,10 +154,10 @@ describe('SettingsView 配置删除', () => {
   });
 
   it('存在持久化 Z-Library 配置时显示删除入口，取消确认不发送请求', async () => {
-    vi.mocked(window.confirm).mockReturnValue(false);
     const wrapper = mount(SettingsView);
     await flushPromises();
     await buttonByText(wrapper, '删除配置').trigger('click');
+    await answerDeleteDialog(false);
     expect(mocks.deleteZlibraryConfig).not.toHaveBeenCalled();
   });
 
@@ -155,13 +169,13 @@ describe('SettingsView 配置删除', () => {
     await flushPromises();
     await wrapper.get('input[type="email"]').setValue('reader@example.com');
     await buttonByText(wrapper, '删除配置').trigger('click');
-    await flushPromises();
+    await answerDeleteDialog(true);
 
     expect(mocks.deleteZlibraryConfig).toHaveBeenCalledTimes(1);
     expect(mocks.getZlibraryConfig).toHaveBeenCalledTimes(2);
     expect((wrapper.get('input[type="email"]').element as HTMLInputElement).value).toBe('');
     expect((wrapper.get('input[type="url"]').element as HTMLInputElement).value).toBe('https://default.example');
-    expect(window.alert).toHaveBeenCalledWith('Zlibrary 配置已删除');
+    expect(toastShown('Zlibrary 配置已删除')).toBe(true);
     expect(wrapper.text()).not.toContain('删除配置');
   });
 
@@ -170,9 +184,9 @@ describe('SettingsView 配置删除', () => {
     const wrapper = mount(SettingsView);
     await flushPromises();
     await buttonByText(wrapper, '删除配置').trigger('click');
-    await flushPromises();
+    await answerDeleteDialog(true);
 
-    expect(window.alert).toHaveBeenCalledWith('删除失败: network unavailable');
+    expect(toastShown('删除失败: network unavailable')).toBe(true);
     expect(wrapper.text()).toContain('删除配置');
   });
 
@@ -210,7 +224,7 @@ describe('SettingsView 配置删除', () => {
     await wrapper.get('form').trigger('submit');
     await flushPromises();
 
-    expect(window.alert).toHaveBeenCalledWith('保存失败: Cookie 验证失败');
+    expect(toastShown('保存失败: Cookie 验证失败')).toBe(true);
     expect((wrapper.get('[data-testid="zlibrary-remix-userid"]').element as HTMLInputElement).value).toBe('');
     expect((wrapper.get('[data-testid="zlibrary-remix-userkey"]').element as HTMLInputElement).value).toBe('');
   });

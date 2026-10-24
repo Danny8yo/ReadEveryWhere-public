@@ -120,8 +120,15 @@ export function makeCitation(
 
 export function structureAt(document: BookDocument, sectionIndex: number, offset: number) {
   return document.toc
-    .filter((node) => node.sectionIndex === sectionIndex && node.start <= offset)
-    .sort((left, right) => right.start - left.start || right.level - left.level)[0] ?? null;
+    .filter(node => {
+      const next = document.toc.slice(node.linearIndex + 1).find(candidate => candidate.level <= node.level);
+      const last = document.sections[document.sections.length - 1];
+      const endSection = node.endSectionIndex ?? (next ? next.sectionIndex : last.sectionIndex);
+      const end = node.end ?? (next ? next.start : last.text.length);
+      return (sectionIndex > node.sectionIndex || (sectionIndex === node.sectionIndex && offset >= node.start)) &&
+        (sectionIndex < endSection || (sectionIndex === endSection && offset < end));
+    })
+    .sort((left, right) => right.level - left.level || right.linearIndex - left.linearIndex)[0] ?? null;
 }
 
 export function revisionsEqual(left: EpubBookLocatorV1["contentRevision"], document: BookDocument): boolean {

@@ -1,215 +1,142 @@
 <template>
-  <!-- 全局禁用右键菜单，交给自定义组件处理 -->
-  <main class="min-h-screen bg-white text-black px-4 md:px-8 py-16 md:py-20 pb-40" @contextmenu.prevent>
-    <div class="max-w-7xl mx-auto">
-      
-      <!-- 页面标题 -->
-      <div class="mb-16 space-y-4">
-        <span class="text-[10px] uppercase tracking-[0.4em] font-bold text-gray-400">私人档案</span>
-        <h1 class="text-4xl md:text-6xl font-serif italic tracking-tighter">书架.</h1>
-      </div>
+  <!-- 书架内禁用浏览器右键菜单，交给自定义菜单处理 -->
+  <main class="library-page" @contextmenu.prevent>
+    <div class="library-page__inner">
+      <header class="library-head">
+        <h1>书架</h1>
+        <span
+          v-if="syncStatus.connection !== 'connected'"
+          role="status"
+          class="library-head__sync"
+          data-testid="library-sync-status"
+        ><i aria-hidden="true" />{{ syncStatus.error ?? '正在连接书库更新…' }}</span>
+        <span class="library-head__grow" />
+        <UiButton data-testid="library-refresh" variant="ghost" size="sm" icon="refresh" @click="loadLibrary({}, { force: true })">刷新书架</UiButton>
+      </header>
 
-      <!-- 工具栏 -->
-      <p v-if="error" role="alert" class="mb-4 text-sm text-red-600">{{ error }}</p>
-      <p v-if="syncStatus.connection !== 'connected'" role="status" class="text-sm text-gray-500" data-testid="library-sync-status">{{ syncStatus.error ?? '正在连接书库更新…' }}</p>
-      <button data-testid="library-refresh" class="mb-4 underline text-sm" @click="loadLibrary({}, {force:true})">刷新书架</button>
-    <LibraryToolbar
+      <p v-if="error" role="alert" class="library-error">{{ error }}</p>
+
+      <LibraryToolbar
         :view-mode="viewMode"
         :total-count="pagination.total"
-        :selected-count="selectedBookIds.length"
-        :is-batch-scraping="isBatchScraping"
-        :batch-scrape-done="batchScrapeDone"
-        :batch-scrape-total="batchScrapeTotal"
-        :is-batch-analyzing="isBatchAnalyzing"
+        :selecting="selecting"
         v-model:searchQuery="searchQuery"
         :selected-formats="selectedFormats"
         @update:selected-formats="selectedFormats = $event"
-        @change-view="setViewMode"
-        @batch-delete="handleBatchDelete"
-        @batch-scrape="handleBatchScrape"
-        @batch-analyze="handleBatchAnalyze"
+        @change-view="changeView"
+        @toggle-selecting="toggleSelecting"
+        @manual-add="isAddingBook = true"
+        @import="openImportModal"
       />
 
-      <section
-        v-if="batchAnalysisResults.length > 0 || batchAnalysisError"
-        data-testid="book-analysis-batch-results"
-        class="mb-8 border-y border-gray-100 py-4"
-      >
-        <div class="flex items-center justify-between gap-4 mb-3">
-          <h2 class="text-[10px] font-bold uppercase tracking-widest text-gray-500">AI 预分析结果</h2>
-          <span v-if="isBatchAnalyzing" class="text-[10px] text-gray-400">处理中</span>
-        </div>
-        <p v-if="batchAnalysisError" class="text-xs text-red-600">{{ batchAnalysisError }}</p>
-        <ul v-else class="grid gap-2">
-          <li v-for="item in batchAnalysisResults" :key="item.bookId" class="flex flex-wrap items-center gap-2 text-xs">
-            <span class="min-w-0 flex-1 truncate text-gray-700">{{ item.title }}</span>
-            <span v-if="item.disposition === 'skipped'" class="text-gray-500">已跳过</span>
-            <span v-else-if="item.disposition === 'rejected'" class="text-red-600">失败</span>
+
+      <!-- 有 AI 预分析结果时分两栏：左边封面墙/列表，右边结果面板（设计稿“书架 · 批量选择”）；窄屏面板在上 -->
+      <div class="library-body" :class="{ 'library-body--panel': showAnalysisPanel }">
+      <div class="library-body__main">
+      <!-- 加载：封面形状的骨架 -->
+      <div v-if="loading" class="library-wall" role="status" aria-label="正在加载书架">
+        <div v-for="n in 10" :key="n" class="library-skeleton" aria-hidden="true"><i /><i /><i /></div>
+      </div>
+
+      <!-- 空书架 / 筛选无结果 -->
+      <div v-else-if="filteredBooks.length === 0" class="library-empty">
+        <div class="library-empty__ghosts" aria-hidden="true"><i /><i /><i /></div>
+        <template v-if="hasFilters">
+          <h2>没有符合条件的书</h2>
+          <p>换个关键词，或者清除格式筛选。</p>
+          <UiButton size="sm" @click="clearFilters">清除筛选</UiButton>
+        </template>
+        <template v-else>
+          <h2>书架还是空的</h2>
+          <p>到“采集”页找书，或者直接导入本地的电子书文件。</p>
+          <div class="library-empty__actions">
+            <UiButton variant="primary" size="sm" icon="upload" @click="openImportModal">导入电子书</UiButton>
+            <UiButton size="sm" icon="plus" @click="isAddingBook = true">手动添加</UiButton>
+          </div>
+        </template>
+      </div>
+
+      <!-- 视图 1：封面墙 -->
+      <div v-else-if="viewMode === 'grid'" class="library-wall" :class="{ 'library-wall--selecting': selecting }">
+        <button type="button" class="library-import-tile" @click="openImportModal">
+          <UiIcon name="plus" :size="26" />
+          <span>导入电子书</span>
+        </button>
+        <LibraryBookTile
+          v-for="book in filteredBooks"
+          :key="book.id"
+          :book="book"
+          :selecting="selecting"
+          :selected="isBookSelected(book.id)"
+          @open="openReadModal(book)"
+          @toggle="toggleSelect(book.id)"
+          @menu="onRightClick($event, book)"
+        />
+      </div>
+
+      <!-- 视图 2：列表（天然可多选） -->
+      <div v-else class="library-list">
+        <label class="library-list__head">
+          <input type="checkbox" :checked="isAllSelected" @change="handleSelectAll" />
+          <span>全选本页</span>
+        </label>
+        <div
+          v-for="book in filteredBooks"
+          :key="book.id"
+          :data-library-book="book.id"
+          class="library-row"
+          :class="{ 'library-row--selected': isBookSelected(book.id) }"
+          @contextmenu.stop.prevent="onRightClick($event, book)"
+        >
+          <input
+            type="checkbox"
+            :checked="isBookSelected(book.id)"
+            :aria-label="`选择《${book.title}》`"
+            @change="toggleSelect(book.id)"
+          />
+          <div class="library-row__cover"><BookCover :title="book.title" :cover-url="book.coverUrl" /></div>
+          <div class="library-row__main">
+            <button type="button" class="library-row__title" @click="openReadModal(book)">{{ book.title }}</button>
+            <span class="library-row__authors">{{ book.authors.join(', ') || '未知作者' }}</span>
+          </div>
+          <div class="library-row__meta">
             <BookAnalysisStatus
-              v-for="status in item.seenStatuses"
-              :key="status"
-              :status="status"
+              v-if="book.bookAnalysis && book.bookAnalysis.status !== 'unsupported'"
+              :status="book.bookAnalysis.status"
             />
+            <span class="library-row__format">{{ getFormatLabel(book) }}</span>
+            <UiStatus v-if="!book.isDownloaded && book.downloadStatus === 'downloading'" tone="info">下载中 {{ normalizedDownloadProgress(book) }}%</UiStatus>
+            <UiStatus v-else-if="book.downloadStatus === 'failed'" tone="err">下载失败</UiStatus>
+            <UiStatus v-else-if="!book.isDownloaded">等待下载</UiStatus>
+          </div>
+        </div>
+      </div>
+
+      </div>
+
+      <aside
+        v-if="showAnalysisPanel"
+        data-testid="book-analysis-batch-results"
+        class="library-analysis"
+        aria-labelledby="library-analysis-title"
+      >
+        <div class="library-analysis__head">
+          <h2 id="library-analysis-title">AI 预分析结果</h2>
+          <span v-if="isBatchAnalyzing">处理中</span>
+          <UiButton v-else variant="ghost" size="sm" icon="close" icon-only label="关闭 AI 预分析结果" @click="dismissBatchResults" />
+        </div>
+        <p v-if="batchAnalysisError" class="library-analysis__error">{{ batchAnalysisError }}</p>
+        <ul v-else>
+          <!-- 每本只显示当前状态；跳过和提交失败直接说明结果 -->
+          <li v-for="item in batchAnalysisResults" :key="item.bookId">
+            <span class="library-analysis__cover"><BookCover :title="item.title" :cover-url="analysisCover(item.bookId)" /></span>
+            <span class="library-analysis__title" :title="item.title">{{ item.title }}</span>
+            <UiStatus v-if="item.disposition === 'skipped'">已跳过</UiStatus>
+            <UiStatus v-else-if="item.disposition === 'rejected'" tone="err">失败</UiStatus>
+            <BookAnalysisStatus v-else-if="item.seenStatuses.length" :status="item.seenStatuses[item.seenStatuses.length - 1]" />
           </li>
         </ul>
-      </section>
-
-      <div v-if="loading" class="text-center py-20 text-gray-400 font-serif italic">
-        正在加载书架...
-      </div>
-      
-      <div v-else-if="filteredBooks.length === 0 && viewMode === 'list'" class="text-center py-20 text-gray-400 font-serif italic">
-        书架空空如也，去“采集”一些书吧。
-      </div>
-
-      <!-- 视图 1: 封面墙 (Grid) -->
-      <div v-else-if="viewMode === 'grid'" class="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-5 gap-x-4 md:gap-x-8 gap-y-8 md:gap-y-16">
-        <!-- 手动添加入口 -->
-        <div
-          class="relative group cursor-pointer"
-          @click="isAddingBook = true"
-        >
-          <div class="aspect-[3/4] overflow-hidden bg-gray-50 rounded-sm relative shadow-sm flex flex-col items-center justify-center border-2 border-dashed border-gray-200 hover:border-black transition-colors group">
-            <span class="text-4xl text-gray-300 group-hover:text-black transition-colors">+</span>
-            <span class="mt-4 text-[10px] font-bold uppercase tracking-widest text-gray-400 group-hover:text-black transition-colors">添加书籍</span>
-          </div>
-        </div>
-
-        <!-- 导入电子书入口 -->
-        <div
-          class="relative group cursor-pointer"
-          @click="openImportModal"
-        >
-          <div class="aspect-[3/4] overflow-hidden bg-gray-50 rounded-sm relative shadow-sm flex flex-col items-center justify-center border-2 border-dashed border-gray-200 hover:border-black transition-colors group">
-            <span class="text-4xl text-gray-300 group-hover:text-black transition-colors">&#8627;</span>
-            <span class="mt-4 text-[10px] font-bold uppercase tracking-widest text-gray-400 group-hover:text-black transition-colors">导入电子书</span>
-          </div>
-        </div>
-
-        <div 
-          v-for="book in filteredBooks" 
-          :key="book.id" :data-library-book="book.id"
-          class="relative group"
-          :class="isBookSelected(book.id) ? 'selected-book-card' : ''"
-          @contextmenu.stop.prevent="onRightClick($event, book)"
-        >
-          <!-- 选择勾选框 -->
-          <div
-            class="absolute top-2 left-2 z-30 transition-opacity"
-            :class="isBookSelected(book.id) ? 'opacity-100' : 'opacity-100 md:opacity-0 md:group-hover:opacity-100'"
-          >
-            <input 
-              type="checkbox" 
-              :checked="selectedBookIds.includes(book.id)"
-              @click.stop
-              @change="toggleSelect(book.id)"
-              class="w-5 h-5 accent-black cursor-pointer shadow-sm"
-            />
-          </div>
-
-          <!-- 封面容器 -->
-          <div
-            class="aspect-[3/4] overflow-hidden bg-gray-50 rounded-sm relative shadow-sm cursor-pointer group transition-all duration-200"
-            :class="isBookSelected(book.id) ? 'ring-4 ring-black ring-offset-4 ring-offset-white shadow-xl' : ''"
-          >
-            <span class="absolute top-3 right-3 z-20 bg-black/80 text-white text-[9px] font-bold uppercase tracking-widest px-2 py-1">
-              {{ getFormatLabel(book) }}
-            </span>
-            <div
-              v-if="isBookSelected(book.id)"
-              class="absolute inset-0 z-10 border-4 border-black bg-black/10 pointer-events-none"
-            />
-            <img
-              :src="book.coverUrl || ''"
-              class="w-full h-full object-cover grayscale-[0.2] hover:grayscale-0 transition-all duration-700 group-hover:scale-105"
-              @click="openReadModal(book)"
-            />
-            <div
-              v-if="isDownloadPending(book)"
-              class="absolute inset-0 z-10 flex flex-col items-center justify-center bg-white/78 backdrop-blur-[1px] px-5 text-center"
-              @click="openReadModal(book)"
-            >
-              <span class="text-[10px] font-bold uppercase tracking-[0.28em] text-gray-500">
-                {{ getDownloadOverlayLabel(book) }}
-              </span>
-              <span class="mt-2 font-serif text-3xl italic tracking-tighter text-black">
-                {{ normalizedDownloadProgress(book) }}%
-              </span>
-              <div class="mt-4 h-1 w-full overflow-hidden rounded-full bg-gray-200">
-                <div
-                  class="h-full bg-black transition-all duration-500"
-                  :style="{ width: `${normalizedDownloadProgress(book)}%` }"
-                />
-              </div>
-            </div>
-            <div v-if="book.downloadStatus === 'failed'"
-              class="absolute inset-0 z-10 flex items-center justify-center bg-white/70 text-[10px] text-red-500 font-bold uppercase tracking-widest">
-              下载失败
-            </div>
-            <BookAnalysisStatus
-              v-if="book.bookAnalysis && book.bookAnalysis.status !== 'unsupported'"
-              class="absolute bottom-3 left-3 z-20"
-              :status="book.bookAnalysis.status"
-            />
-          </div>
-
-          <!-- 底部元数据 -->
-          <div class="mt-4 space-y-1" @click="openReadModal(book)">
-            <p class="text-[9px] uppercase tracking-widest text-gray-400 font-bold line-clamp-1">{{ book.authors.join(', ') }}</p>
-            <h3 class="text-sm font-serif leading-tight group-hover:text-gray-500 transition-colors">{{ book.title }}</h3>
-          </div>
-        </div>
-      </div>
-
-      <!-- 视图 2: 列表页 (List) -->
-      <div v-else class="space-y-1">
-        <!-- 列表表头：全选 -->
-        <div class="flex items-center justify-between border-b-2 border-black pb-4 mb-4 px-4">
-          <div class="flex items-center gap-6">
-            <input 
-              type="checkbox" 
-              :checked="isAllSelected"
-              @change="handleSelectAll"
-              class="w-4 h-4 accent-black"
-            />
-            <span class="text-[10px] font-bold uppercase tracking-widest text-gray-400">全选本页</span>
-          </div>
-          <div class="text-[10px] font-bold uppercase tracking-widest text-gray-400 mr-8">
-            详细信息与操作
-          </div>
-        </div>
-
-        <div 
-          v-for="book in filteredBooks" 
-          :key="book.id" :data-library-book="book.id"
-          class="flex items-center justify-between border-b border-gray-50 py-4 hover:bg-gray-50/50 px-4 transition-colors group"
-          @contextmenu.stop.prevent="onRightClick($event, book)"
-        >
-          <div class="flex items-center gap-6">
-            <input 
-              type="checkbox" 
-              :checked="selectedBookIds.includes(book.id)"
-              @change="toggleSelect(book.id)"
-              class="w-4 h-4 accent-black"
-            />
-            <div class="flex flex-col">
-              <span class="font-serif text-base cursor-pointer hover:underline" @click="openReadModal(book)">{{ book.title }}</span>
-              <span class="text-[10px] text-gray-400 uppercase tracking-widest">{{ book.authors.join(', ') }}</span>
-            </div>
-          </div>
-          <div class="flex gap-3 md:gap-12 items-center text-[10px] font-bold uppercase tracking-widest text-gray-400">
-            <BookAnalysisStatus
-              v-if="book.bookAnalysis && book.bookAnalysis.status !== 'unsupported'"
-              :status="book.bookAnalysis.status"
-            />
-            <span>{{ getFormatLabel(book) }}</span>
-            <span v-if="!book.isDownloaded && book.downloadStatus === 'downloading'" class="text-black">
-              下载中 {{ book.downloadProgress || 0 }}%
-            </span>
-            <span v-else-if="book.downloadStatus === 'failed'" class="text-red-500">下载失败</span>
-            <span v-else-if="!book.isDownloaded" class="text-gray-300">等待下载</span>
-          </div>
-        </div>
+      </aside>
       </div>
 
       <Pagination
@@ -220,18 +147,27 @@
         aria-label="书架分页"
         @go="goToLibraryPage"
       />
+
+      <LibraryBatchBar
+        v-if="viewMode === 'list' || selecting"
+        :selected-count="selectedBookIds.length"
+        :is-batch-scraping="isBatchScraping"
+        :batch-scrape-done="batchScrapeDone"
+        :batch-scrape-total="batchScrapeTotal"
+        :is-batch-analyzing="isBatchAnalyzing"
+        @batch-delete="handleBatchDelete"
+        @batch-scrape="handleBatchScrape"
+        @batch-analyze="handleBatchAnalyze"
+      />
     </div>
 
-    <!-- 交互层 (Modals) -->
-
-    <!-- 手动添加书籍弹窗 -->
+    <!-- 交互层 -->
     <ManualAddModal
       :is-open="isAddingBook"
       @close="isAddingBook = false"
       @save="onAddBook"
     />
 
-    <!-- 导入电子书弹窗 -->
     <ImportBookModal
       ref="importModalRef"
       :is-open="isImporting"
@@ -240,38 +176,37 @@
       @import="onImportBook"
     />
 
-    <!-- 详情弹窗 -->
-    <BookDetailModal 
+    <BookDetailModal
       :is-open="!!readingBook"
       :book="readingBookItem"
       :library-book-id="readingBook?.id"
-      mode="library" 
+      :deleted="detailBookDeleted"
+      mode="library"
       @close="readingBook = null"
       @read="startReading"
       @analyze="handleDetailAnalyze"
       @profile-updated="handleProfileUpdated"
       @douban-rating-selected="handleDoubanRatingSelected"
+      @edit="editFromDetail('edit')"
+      @scrape="editFromDetail('scrape')"
     />
 
-    <!-- 右键自定义菜单 -->
-    <ContextMenu 
-      :show="menuState.show" 
-      :x="menuState.x" 
-      :y="menuState.y" 
+    <ContextMenu
+      :show="menuState.show"
+      :x="menuState.x"
+      :y="menuState.y"
       @close="menuState.show = false"
       @action="handleMenuAction"
     />
 
-    <!-- 编辑信息弹窗 -->
-    <BookEditModal 
+    <BookEditModal
       :is-open="isEditing"
       :book="targetBook"
       @close="isEditing = false"
       @save="onSaveMetadata"
     />
 
-    <!-- 智能刮削弹窗 -->
-    <ScraperModal 
+    <ScraperModal
       :is-open="isScraping"
       :book="targetBook"
       @close="isScraping = false"
@@ -287,32 +222,53 @@
       @progress="handleBatchScrapeProgress"
       @applied="handleBatchMetadataApplied"
     />
+
+    <!-- 删除确认（替代 window.confirm） -->
+    <UiOverlay :open="pendingDelete !== null" kind="dialog" labelledby="library-delete-title" @close="pendingDelete = null">
+      <div v-if="pendingDelete" class="library-confirm">
+        <h2 id="library-delete-title">{{ pendingDelete.heading }}</h2>
+        <p>书籍文件、批注和阅读记录会一起删除，无法恢复。</p>
+        <div class="library-confirm__actions">
+          <UiButton data-autofocus :disabled="deleting" @click="pendingDelete = null">取消</UiButton>
+          <UiButton variant="danger" icon="trash" :disabled="deleting" @click="confirmDelete">{{ deleting ? '正在删除…' : '删除' }}</UiButton>
+        </div>
+      </div>
+    </UiOverlay>
   </main>
 </template>
 
 <script setup lang="ts">
-import { toLibraryDetail } from '../features/library/domain/detail';
+import { toLibraryDetail } from '../features/book-detail/domain/detail';
 import type { BatchImportBookResultItem } from '../features/library/model/library';
 import { ref, reactive, computed, onMounted, nextTick, onBeforeUnmount, onUnmounted, watch } from 'vue';
-import LibraryToolbar from '../components/library/LibraryToolbar.vue';
-import ContextMenu from '../components/library/ContextMenu.vue';
-import BookEditModal from '../components/library/BookEditModal.vue';
-import ScraperModal from '../components/library/ScraperModal.vue';
-import BatchMetadataReviewModal from '../components/library/BatchMetadataReviewModal.vue';
-import ManualAddModal from '../components/library/ManualAddModal.vue';
-import ImportBookModal from '../components/library/ImportBookModal.vue';
-import BookDetailModal from '../components/BookDetailModal.vue';
-import BookAnalysisStatus from '../components/book-analysis/BookAnalysisStatus.vue';
-import Pagination from '../components/Pagination.vue';
-import { useLibrary } from '../composables/useLibrary';
+import LibraryToolbar from '../features/library/ui/LibraryToolbar.vue';
+import ContextMenu from '../features/library/ui/ContextMenu.vue';
+import BookEditModal from '../features/library/ui/BookEditModal.vue';
+import ScraperModal from '../features/metadata/ui/ScraperModal.vue';
+import BatchMetadataReviewModal from '../features/metadata/ui/BatchMetadataReviewModal.vue';
+import ManualAddModal from '../features/library/ui/ManualAddModal.vue';
+import ImportBookModal from '../features/library/ui/ImportBookModal.vue';
+import BookDetailModal from '../features/book-detail/ui/BookDetailModal.vue';
+import BookAnalysisStatus from '../features/metadata/ui/BookAnalysisStatus.vue';
+import LibraryBookTile from '../features/library/ui/LibraryBookTile.vue';
+import LibraryBatchBar from '../features/library/ui/LibraryBatchBar.vue';
+import Pagination from '../shared/ui/Pagination.vue';
+import BookCover from '../shared/ui/BookCover.vue';
+import UiButton from '../shared/ui/UiButton.vue';
+import UiIcon from '../shared/ui/UiIcon.vue';
+import UiOverlay from '../shared/ui/UiOverlay.vue';
+import UiStatus from '../shared/ui/UiStatus.vue';
+import { showToast } from '../shared/web/toast';
+import { useLibrary } from '../features/library/web/useLibrary';
 import { importBooks } from '../features/library/web/importBooks';
 import type { LibraryBook, AddBookManualParams } from '../features/library/model/library';
 import type { MetadataProvider, ScrapedResult } from '../features/metadata/model/metadata';
-import type { BookDetailModel } from '../shared/model/bookDetail';
-import { useReader } from '../composables/useReader';
+import type { BookDetailModel } from '../features/book-detail/model/bookDetail';
+import { useReader } from '../features/reader/web/useReader';
 import { useLibraryAnalysis } from '../features/library/web/useLibraryAnalysis';
+import { useBookDeletion } from '../features/library/web/librarySession';
 import { toAnalysisSummary } from '../features/metadata/domain/analysisSummary';
-import { useBookAnalysis } from '../composables/useBookAnalysis';
+import { useBookAnalysis } from '../features/metadata/web/useBookAnalysis';
 import { genreDisplayLabel, isBookAnalysisActive } from '../features/metadata/domain/analysisState';
 import type {
   BookAnalysisDetail,
@@ -321,7 +277,7 @@ import type {
   BookAnalysisSummary,
 } from '../features/metadata/model/bookAnalysis';
 import type { DoubanRatingCandidate } from '../features/metadata/model/metadata';
-import type { EbookFormat } from '../utils/bookFormat';
+import type { EbookFormat } from '../shared/utils/bookFormat';
 
 interface ImportModalItem extends BatchImportBookResultItem {
   localId: string;
@@ -340,6 +296,7 @@ const {
   addBook,
   toggleSelect,
   toggleSelectAll,
+  clearSelection,
   deleteBooks,
   updateBookMetadata, browse, invalidate, updateCachedBook, syncStatus
 } = useLibrary();
@@ -350,26 +307,32 @@ const getFormatLabel = (book: LibraryBook) => {
   return book.format?.toUpperCase() ?? '无格式';
 };
 
-const activeDownloadStatuses = new Set(['queued', 'downloading']);
-
 const normalizedDownloadProgress = (book: LibraryBook) => {
   const progress = Number(book.downloadProgress ?? 0);
   if (!Number.isFinite(progress)) return 0;
   return Math.min(100, Math.max(0, Math.round(progress)));
 };
 
-const isDownloadPending = (book: LibraryBook) => {
-  return !book.isDownloaded && activeDownloadStatuses.has(book.downloadStatus ?? '');
-};
-
-const getDownloadOverlayLabel = (book: LibraryBook) => {
-  return book.downloadStatus === 'queued' ? '等待下载' : '下载中';
-};
-
 // 本地搜索过滤逻辑
 const searchQuery = ref(browse.query.keyword ?? '');
 const selectedFormats = ref<EbookFormat[]>(browse.query.formats ?? []);
 const filteredBooks = computed(() => books.value);
+const hasFilters = computed(() => searchQuery.value.trim() !== '' || selectedFormats.value.length > 0);
+const clearFilters = () => {
+  searchQuery.value = '';
+  selectedFormats.value = [];
+};
+
+// 封面墙的选择模式：进入后点封面是勾选；退出时清空已选。列表视图天然可选。
+const selecting = ref(false);
+const toggleSelecting = () => {
+  selecting.value = !selecting.value;
+  if (!selecting.value) clearSelection();
+};
+const changeView = (mode: typeof viewMode.value) => {
+  setViewMode(mode);
+  selecting.value = mode === 'grid' && selectedBookIds.value.length > 0;
+};
 watch(books, (_next,previous) => {
   if(!previous.length)return;
   const elements=Array.from(document.querySelectorAll<HTMLElement>('[data-library-book]'));
@@ -414,6 +377,7 @@ const importItems = ref<ImportModalItem[]>([]);
 const readingBook = ref<LibraryBook | null>(null); // 详情弹窗 (LibraryBook type)
 const readingBookItem = computed(() => readingBook.value ? toLibraryDetail(readingBook.value) : null);
 const detailBookId = computed(() => readingBook.value?.id ?? null);
+const detailBookDeleted = useBookDeletion(() => detailBookId.value);
 const {
   analysis: detailAnalysis,
   refresh: refreshDetailAnalysis,
@@ -444,9 +408,9 @@ const onAddBook = async (params: AddBookManualParams) => {
   try {
     await addBook(params);
     isAddingBook.value = false;
-    alert(`书籍《${params.title}》已成功添加到书架`);
+    showToast(`《${params.title}》已加入书架`, 'ok');
   } catch (e: any) {
-    alert(`添加失败：${e.message}`);
+    showToast(`添加失败：${e.message}`, 'err');
   }
 };
 
@@ -469,7 +433,7 @@ const onImportBook = async (params: { files: File[]; title?: string; authors?: s
     importModalRef.value?.setSubmitting(false);
     closeImportModal();
   } catch (e: any) {
-    alert(`导入失败：${e.message || '未知错误'}`);
+    showToast(`导入失败：${e.message || '未知错误'}`, 'err');
     importModalRef.value?.setSubmitting(false);
   }
 };
@@ -488,13 +452,15 @@ const isBatchReviewOpen = ref(false);
 const batchScrapeBooks = ref<LibraryBook[]>([]);
 const batchScrapeProvider = ref<MetadataProvider>('zlibrary');
 
-const { isBatchAnalyzing, batchAnalysisResults, batchAnalysisError, handleBatchAnalyze } = useLibraryAnalysis(books, selectedBookIds);
+const { isBatchAnalyzing, batchAnalysisResults, batchAnalysisError, handleBatchAnalyze, dismissBatchResults } = useLibraryAnalysis(books, selectedBookIds);
+const showAnalysisPanel = computed(() => batchAnalysisResults.value.length > 0 || !!batchAnalysisError.value);
+const analysisCover = (bookId: number) => books.value.find(book => book.id === bookId)?.coverUrl ?? null;
 
 const handleBatchScrape = (provider: MetadataProvider = 'zlibrary') => {
   if (isBatchScraping.value) return;
   const selectedBooks = filteredBooks.value.filter((book) => selectedBookIds.value.includes(book.id));
   if (selectedBooks.length === 0) {
-    alert('请先在封面墙或列表中选择要刮削的书籍。');
+    showToast('先选择要刮削的书。');
     return;
   }
 
@@ -561,7 +527,7 @@ const startReading = (book: BookDetailModel | LibraryBook) => {
   const libBook = readingBook.value;
   if (!libBook) return;
   if (!libBook.isDownloaded || !libBook.fileUrl) {
-    alert('该书籍尚未下载完成，暂无法阅读。');
+    showToast('这本书还没下载完成，暂时无法阅读。');
     return;
   }
   openReader({
@@ -592,16 +558,17 @@ const onRightClick = (e: MouseEvent, book: LibraryBook) => {
 const handleMenuAction = async (action: string) => {
   if (action === 'edit') isEditing.value = true;
   if (action === 'scrape') isScraping.value = true;
-  if (action === 'delete') {
-    if (targetBook.value && confirm(`⚠️ 永久删除确认\n确定要从您的私有书库中永久移除《${targetBook.value.title}》吗？`)) {
-      try {
-        await deleteBooks([targetBook.value.id]);
-        alert('已成功删除书籍');
-      } catch (e: any) {
-        alert(`删除失败：${e.message}`);
-      }
-    }
+  if (action === 'delete' && targetBook.value) {
+    pendingDelete.value = { ids: [targetBook.value.id], heading: `删除《${targetBook.value.title}》？` };
   }
+};
+
+// 详情里的“编辑信息 / 刮削元数据”：和右键菜单走同一套弹窗，弹窗叠在详情之上
+const editFromDetail = (action: 'edit' | 'scrape') => {
+  if (!readingBook.value) return;
+  targetBook.value = { ...readingBook.value };
+  if (action === 'edit') isEditing.value = true;
+  else isScraping.value = true;
 };
 
 // 6. 刮削回填逻辑 (PRD 核心逻辑)
@@ -626,34 +593,150 @@ const onApplyScrapedData = (scrapedData: ScrapedResult) => {
 // 7. 保存元数据到书架
 const onSaveMetadata = async (updatedData: LibraryBook) => {
   try {
-    await updateBookMetadata(updatedData.id, updatedData);
+    const saved = await updateBookMetadata(updatedData.id, updatedData);
     isEditing.value = false;
-    alert('书籍信息已成功更新');
+    // 书架列表要等失效后的重新查询才更新：先用服务端返回的书刷新缓存里的这本和打开中的详情，
+    // 否则详情会一直显示旧书名/简介，直到重新打开
+    updateCachedBook(saved.id, saved);
+    if (readingBook.value?.id === saved.id) readingBook.value = { ...readingBook.value, ...saved };
+    showToast('书籍信息已更新', 'ok');
   } catch (e: any) {
-    alert(`更新失败：${e.message}`);
+    showToast(`更新失败：${e.message}`, 'err');
   }
 };
 
-const handleBatchDelete = async () => {
-  if (confirm(`确定要批量删除选中的 ${selectedBookIds.value.length} 本书籍吗？`)) {
-    try {
-      await deleteBooks(selectedBookIds.value);
-      alert('批量删除成功');
-    } catch (e: any) {
-      alert(`批量删除失败：${e.message}`);
-    }
+// 删除统一走页面内确认框（单本来自右键菜单，多本来自批量操作条）
+const pendingDelete = ref<{ ids: number[]; heading: string } | null>(null);
+const deleting = ref(false);
+const handleBatchDelete = () => {
+  if (selectedBookIds.value.length === 0) return;
+  pendingDelete.value = { ids: [...selectedBookIds.value], heading: `删除选中的 ${selectedBookIds.value.length} 本书？` };
+};
+const confirmDelete = async () => {
+  const target = pendingDelete.value;
+  if (!target || deleting.value) return;
+  deleting.value = true;
+  try {
+    await deleteBooks(target.ids);
+    showToast(target.ids.length > 1 ? `已删除 ${target.ids.length} 本书` : '已删除', 'ok');
+    pendingDelete.value = null;
+  } catch (e: any) {
+    showToast(`删除失败：${e.message}`, 'err');
+  } finally {
+    deleting.value = false;
   }
 };
 </script>
 
 <style scoped>
-/* 针对列表淡入的微动画 */
-.animate-fade-in {
-  animation: fadeIn 0.3s ease-out;
+.library-page {
+  min-height: 100vh;
+  padding: 28px clamp(16px, 3vw, 32px) 48px;
+  background: var(--ui-bg);
+  color: var(--ui-fg);
+}
+.library-page__inner { max-width: 1240px; margin: 0 auto; }
+
+.library-head { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 14px; margin-bottom: 18px; }
+.library-head h1 { margin: 0; font-size: 26px; font-weight: 900; letter-spacing: -0.01em; }
+.library-head__grow { flex: 1; }
+.library-head__sync {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 12px;
+  border: 1px solid var(--ui-line);
+  border-radius: 999px;
+  background: var(--ui-surface);
+  color: var(--ui-muted);
+  font-size: 12px;
+}
+.library-head__sync i { width: 8px; height: 8px; border-radius: 50%; background: var(--ui-warn); animation: library-pulse 1.4s infinite; }
+@keyframes library-pulse { 50% { opacity: 0.3; } }
+.library-error { margin: 0 0 14px; padding: 10px 14px; border-radius: 12px; background: color-mix(in srgb, var(--ui-err) 10%, var(--ui-surface)); color: var(--ui-err); font-size: 13px; }
+
+.library-body--panel { display: grid; grid-template-columns: minmax(0, 1fr) 300px; gap: 18px; align-items: start; }
+.library-body__main { min-width: 0; }
+.library-analysis { position: sticky; top: calc(var(--app-header-h, 64px) + 12px); padding: 14px 16px; border: 1px solid var(--ui-line); border-radius: var(--ui-radius-card); background: var(--ui-surface); }
+.library-analysis__head { display: flex; justify-content: space-between; align-items: center; gap: 10px; min-height: 28px; margin-bottom: 10px; }
+.library-analysis__head h2 { margin: 0; font-size: 15px; font-weight: 900; }
+.library-analysis__head span { font-size: 12px; color: var(--ui-muted); }
+.library-analysis__error { margin: 0; font-size: 13px; color: var(--ui-err); }
+.library-analysis ul { display: grid; gap: 8px; margin: 0; padding: 0; list-style: none; }
+.library-analysis li { display: grid; grid-template-columns: 26px minmax(0, 1fr) auto; align-items: center; gap: 10px; font-size: 13px; }
+.library-analysis__cover :deep(.book-cover) { border-radius: 3px; }
+.library-analysis__title { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+@media (max-width: 900px) {
+  .library-body--panel { grid-template-columns: minmax(0, 1fr); }
+  .library-analysis { position: static; order: -1; }
 }
 
-@keyframes fadeIn {
-  from { opacity: 0; transform: translateY(5px); }
-  to { opacity: 1; transform: translateY(0); }
+.library-wall {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(132px, 1fr));
+  gap: 28px 18px;
 }
+@media (max-width: 640px) {
+  .library-wall { grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 20px 10px; }
+}
+.library-import-tile {
+  aspect-ratio: 3 / 4;
+  display: grid;
+  place-content: center;
+  justify-items: center;
+  gap: 8px;
+  border: 1.5px dashed color-mix(in srgb, var(--ui-fg) 28%, transparent);
+  border-radius: var(--ui-radius-cover);
+  background: transparent;
+  color: var(--ui-muted);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+  transition: border-color 0.15s, color 0.15s;
+}
+.library-import-tile:hover { border-color: var(--ui-fg); color: var(--ui-fg); }
+.library-import-tile:focus-visible { outline: 2px solid var(--ui-fg); outline-offset: 3px; }
+.library-wall--selecting .library-import-tile { opacity: 0.4; pointer-events: none; }
+
+.library-skeleton { display: grid; gap: 7px; }
+.library-skeleton i { display: block; border-radius: var(--ui-radius-cover); background: linear-gradient(90deg, var(--ui-surface2) 30%, color-mix(in srgb, var(--ui-surface2) 60%, var(--ui-fg) 8%) 50%, var(--ui-surface2) 70%) 0 0 / 300% 100%; animation: library-shimmer 1.6s infinite linear; }
+.library-skeleton i:first-child { aspect-ratio: 3 / 4; }
+.library-skeleton i:nth-child(2) { height: 11px; width: 80%; }
+.library-skeleton i:nth-child(3) { height: 9px; width: 50%; }
+@keyframes library-shimmer { to { background-position: -150% 0; } }
+@media (prefers-reduced-motion: reduce) { .library-skeleton i, .library-head__sync i { animation: none; } }
+
+.library-empty { display: grid; justify-items: center; gap: 10px; padding: 64px 16px; text-align: center; }
+.library-empty h2 { margin: 6px 0 0; font-size: 18px; font-weight: 900; }
+.library-empty p { margin: 0; max-width: 32ch; font-size: 14px; color: var(--ui-muted); }
+.library-empty__actions { display: flex; flex-wrap: wrap; justify-content: center; gap: 8px; margin-top: 4px; }
+.library-empty__ghosts { display: flex; align-items: flex-end; gap: 6px; height: 88px; }
+.library-empty__ghosts i { width: 46px; border-radius: 5px; border: 1.5px dashed color-mix(in srgb, var(--ui-fg) 28%, transparent); }
+.library-empty__ghosts i:nth-child(1) { height: 62px; transform: rotate(-6deg); }
+.library-empty__ghosts i:nth-child(2) { height: 80px; }
+.library-empty__ghosts i:nth-child(3) { height: 70px; transform: rotate(5deg); }
+
+.library-list { border: 1px solid var(--ui-line); border-radius: var(--ui-radius-card); background: var(--ui-surface); overflow: hidden; }
+.library-list input[type="checkbox"] { width: 16px; height: 16px; flex: none; accent-color: var(--ui-strong); cursor: pointer; }
+.library-list__head { display: flex; align-items: center; gap: 12px; padding: 10px 16px; border-bottom: 1px solid var(--ui-line); background: var(--ui-bg2); font-size: 12px; color: var(--ui-muted); cursor: pointer; }
+.library-row { display: grid; grid-template-columns: auto 34px minmax(0, 1fr) auto; align-items: center; gap: 12px; padding: 10px 16px; border-bottom: 1px solid var(--ui-line); }
+.library-row:last-child { border-bottom: 0; }
+.library-row:hover, .library-row--selected { background: color-mix(in srgb, var(--ui-fg) 4%, transparent); }
+.library-row__cover :deep(.book-cover) { border-radius: 3px; }
+.library-row__main { display: grid; gap: 2px; min-width: 0; }
+.library-row__title { justify-self: start; max-width: 100%; padding: 0; border: 0; background: none; color: var(--ui-fg); font: inherit; font-size: 14px; font-weight: 700; text-align: left; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; cursor: pointer; }
+.library-row__title:hover { text-decoration: underline; text-underline-offset: 3px; }
+.library-row__title:focus-visible { outline: 2px solid var(--ui-fg); outline-offset: 2px; }
+.library-row__authors { font-size: 12px; color: var(--ui-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.library-row__meta { display: flex; flex-wrap: wrap; justify-content: flex-end; align-items: center; gap: 8px; }
+.library-row__format { font-size: 11px; font-weight: 700; color: var(--ui-muted); letter-spacing: 0.04em; }
+@media (max-width: 640px) {
+  .library-row { grid-template-columns: auto 30px minmax(0, 1fr); padding: 10px 12px; }
+  .library-row__meta { grid-column: 3; justify-content: flex-start; }
+}
+
+.library-confirm { display: grid; gap: 10px; padding: 22px; }
+.library-confirm h2 { margin: 0; font-size: 17px; font-weight: 900; }
+.library-confirm p { margin: 0; font-size: 14px; color: var(--ui-fg2); }
+.library-confirm__actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 8px; }
 </style>

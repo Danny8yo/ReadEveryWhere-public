@@ -4,13 +4,18 @@ import {
   setTimeout as wait,
 } from "node:timers/promises";
 import type { EpubEvidence } from "@readeverywhere/epub-core/node";
-import { BOOK_MAX_EXPAND_CHARS, BOOK_MAX_EXPAND_SELECTED } from "../../public/book-retrieval.port";
+import { BOOK_MAX_EXPAND_CHARS, BOOK_MAX_EXPAND_SELECTED, BOOK_MAX_POOL } from "../../public/book-retrieval.port";
 import type {
   BookRetrievalPort,
   RetrievalScope,
   IndexState,
   VerifiedBookEvidence,
+  BookPoolResult,
+  BookPoolPath,
+  BookPoolListStat,
 } from "../../public/book-retrieval.port";
+/** Per-list SQL limit for dual recall; the fused pool is capped separately by poolLimit. */
+const DUAL_LIST_LIMIT = 30;
 import type { CurrentBookArtifactFencePort } from "../../public/current-book-artifact-fence.port";
 import type { BookSelectionSourcePort } from "./ports/book-selection-source.port";
 import type { BookDocumentExtractorPort } from "./ports/book-document-extractor.port";
@@ -78,7 +83,7 @@ export class BookRetrievalService implements BookRetrievalPort {
           ]),
         )
         .digest("hex");
-    return { ...scope, userId, key, version };
+    return { ...scope, userId, key, version, format: this.worker.format };
   }
   private async bytes(i: IndexIdentity) {
     const file = await this.source.readOwnedEpubArtifact(i.userId, i.bookId);
@@ -238,14 +243,50 @@ export class BookRetrievalService implements BookRetrievalPort {
     const pool = await this.retrievalPool(userId, input);
     if (!pool.ready) return pool.state;
     const { i, bytes, state, selected, rawCandidateCount } = pool;
-    const admitted: RankedChunk[] = [];
+    const verified = await this.verifyAdmitted(userId, i, bytes, selected, limit, maxChars, input.deadline, input.signal);
+    return { ...state, candidates: verified.candidates, rawCandidateCount, budgetLimited: verified.budgetLimited,
+      contextTruncated: false,
+      contextWindows: verified.candidates.map(e => ({ sectionIndex: e.sectionIndex, start: e.start, end: e.end,
+        hitRanges: [{ sectionIndex: e.sectionIndex, start: e.start, end: e.end }], contextTruncated: false })),
+    };
+  }
+  async searchPool(userId: number, input: Parameters<BookRetrievalPort["searchPool"]>[1]): Promise<BookPoolResult> {
+    this.deadline(input.deadline, input.signal);
+    const poolLimit = input.poolLimit ?? 20;
+    if (!Number.isInteger(poolLimit) || poolLimit < 1 || poolLimit > BOOK_MAX_POOL)
+      throw new ReaderToolException("QUERY_INVALID", `Pool limit must be 1–${BOOK_MAX_POOL}`);
+    const pool = await this.retrievalPool(userId, { ...input, poolLimit });
+    if (!pool.ready) return pool.state;
+    this.deadline(input.deadline, input.signal);
+    return { ...pool.state, rawCandidateCount: pool.rawCandidateCount, lists: pool.lists,
+      candidates: pool.selected.map((c, rank) => ({
+        sectionIndex: c.sectionIndex, href: c.href, start: c.start, end: c.end, quote: c.quote, quoteHash: c.quoteHash,
+        displayedQuote: c.displayedQuote, cfi: c.cfi, fusedRank: rank, paths: c.paths,
+      })),
+    };
+  }
+  async verifyCandidates(userId: number, input: Parameters<BookRetrievalPort["verifyCandidates"]>[1]) {
+    this.deadline(input.deadline, input.signal);
+    if (!Array.isArray(input.candidates) || input.candidates.length > BOOK_MAX_POOL ||
+        !Number.isInteger(input.limit) || input.limit < 1 || input.limit > 20 ||
+        !Number.isSafeInteger(input.maxChars) || input.maxChars < 1 || input.maxChars > 12000)
+      throw new ReaderToolException("QUERY_INVALID", `Verification accepts at most ${BOOK_MAX_POOL} candidates, limit 1–20 and 1–12000 characters`);
+    const i = this.identity(userId, input);
+    const bytes = await this.bytes(i);
+    return this.verifyAdmitted(userId, i, bytes, input.candidates, input.limit, input.maxChars, input.deadline, input.signal);
+  }
+  /** Admits candidates in the given order under count/character budgets, then proves each by exact EPUB replay. */
+  private async verifyAdmitted(userId: number, i: IndexIdentity, bytes: Buffer,
+    ordered: Array<Pick<RankedChunk, "sectionIndex" | "href" | "start" | "end" | "quote" | "quoteHash" | "displayedQuote" | "cfi">>,
+    limit: number, maxChars: number, deadline: number, signal?: AbortSignal) {
+    const admitted: typeof ordered = [], admittedIndices: number[] = [];
     let remaining = maxChars, budgetLimited = false;
-    for (const candidate of selected) {
-      if (admitted.length >= limit) break;
-      if (candidate.quote.length > remaining) { budgetLimited = true; continue; }
-      admitted.push(candidate); remaining -= candidate.quote.length;
-    }
-    const replayed = admitted.length ? await this.worker.candidatesReplay(bytes, i, admitted, input.deadline, input.signal) : [];
+    ordered.forEach((candidate, index) => {
+      if (admitted.length >= limit) return;
+      if (candidate.quote.length > remaining) { budgetLimited = true; return; }
+      admitted.push(candidate); admittedIndices.push(index); remaining -= candidate.quote.length;
+    });
+    const replayed = admitted.length ? await this.worker.candidatesReplay(bytes, i, admitted, deadline, signal) : [];
     this.fence.assertCurrent(userId, i.artifact);
     if (replayed.length !== admitted.length) throw new Error("Candidate replay returned wrong count");
     const candidates = admitted.map(expected => {
@@ -256,12 +297,8 @@ export class BookRetrievalService implements BookRetrievalPort {
         throw new ReaderToolException("TEXT_QUOTE_MISMATCH", "Candidate differs from authoritative EPUB replay");
       return this.evidence(i, actual);
     });
-    this.deadline(input.deadline, input.signal);
-    return { ...state, candidates, rawCandidateCount, budgetLimited,
-      contextTruncated: false,
-      contextWindows: candidates.map(e => ({ sectionIndex: e.sectionIndex, start: e.start, end: e.end,
-        hitRanges: [{ sectionIndex: e.sectionIndex, start: e.start, end: e.end }], contextTruncated: false })),
-    };
+    this.deadline(deadline, signal);
+    return { candidates, admitted: admittedIndices, budgetLimited };
   }
   async expandSelected(userId: number, input: Parameters<BookRetrievalPort["expandSelected"]>[1]) {
     this.deadline(input.deadline, input.signal);
@@ -293,8 +330,10 @@ export class BookRetrievalService implements BookRetrievalPort {
         hitRanges: e.hitRanges, contextTruncated: e.contextTruncated })),
     };
   }
-  private async retrievalPool(userId: number, input: Parameters<BookRetrievalPort["searchCandidates"]>[1]) {
-    const queries = this.worker.queries(input.queries),
+  private async retrievalPool(userId: number, input: RetrievalScope & { queries: string[]; informationNeed?: string; poolLimit?: number; deadline: number; signal?: AbortSignal }) {
+    const dual = this.worker.format === "dual-file-v1";
+    const plan = dual ? this.worker.plan(input.queries, input.informationNeed) : null,
+      queries = dual ? null : this.worker.queries(input.queries),
       i = this.identity(userId, input),
       bytes = await this.bytes(i);
     this.deadline(input.deadline, input.signal);
@@ -311,19 +350,38 @@ export class BookRetrievalService implements BookRetrievalPort {
     if (state.state === "building") return { ready: false as const, state };
     this.deadline(input.deadline, input.signal);
     this.fence.assertCurrent(userId, i.artifact);
-    const combined = new Map<number, { chunk: RankedChunk; rrf: number }>();
+    // Each ranked list contributes weight/(60+rank); ties keep the lower chunk id.
+    const combined = new Map<number, { chunk: RankedChunk; rrf: number; paths: BookPoolPath[] }>();
     let rawCandidateCount = 0;
-    for (const tokens of queries) {
-      const hits = this.repository.search(i, state.generation, tokens);
+    const lists: BookPoolListStat[] = [];
+    const add = (hits: RankedChunk[], weight: number, path: (rank: number) => BookPoolPath | null) => {
       rawCandidateCount += hits.length;
       hits.forEach((chunk, rank) => {
-        const current = combined.get(chunk.id);
-        if (current) current.rrf += 1 / (60 + rank + 1);
-        else combined.set(chunk.id, { chunk, rrf: 1 / (60 + rank + 1) });
+        const current = combined.get(chunk.id) ?? { chunk, rrf: 0, paths: [] };
+        current.rrf += weight / (60 + rank + 1);
+        const p = path(rank);
+        if (p) current.paths.push(p);
+        combined.set(chunk.id, current);
       });
+    };
+    if (plan) {
+      for (const result of this.repository.searchLists(i, state.generation, plan.lists, DUAL_LIST_LIMIT)) {
+        lists.push({ kind: result.list.kind, query: result.list.query, considered: result.considered, minimum: result.minimum, hitCount: result.hits.length });
+        add(result.hits, result.list.weight, rank => ({ kind: result.list.kind, query: result.list.query, rank }));
+      }
+    } else {
+      // prepareKeywordQueries removes duplicate queries; labels follow the same de-duplicated order.
+      const labels = [...new Set(input.queries)];
+      if (labels.length !== queries!.length) throw new Error("Prepared query count differs from distinct input queries");
+      for (const [index, tokens] of queries!.entries()) {
+        const hits = this.repository.search(i, state.generation, tokens);
+        lists.push({ kind: "phrase", query: labels[index], considered: tokens.length, minimum: 1, hitCount: hits.length });
+        add(hits, 1, rank => ({ kind: "phrase", query: labels[index], rank }));
+      }
     }
-    const selected: RankedChunk[] = [];
-    for (const { chunk } of [...combined.values()].sort(
+    const poolLimit = input.poolLimit ?? 20;
+    const selected: Array<RankedChunk & { paths: BookPoolPath[] }> = [];
+    for (const { chunk, paths } of [...combined.values()].sort(
       (a, b) => b.rrf - a.rrf || a.chunk.id - b.chunk.id,
     )) {
       if (
@@ -339,10 +397,10 @@ export class BookRetrievalService implements BookRetrievalPort {
         )
       )
         continue;
-      selected.push(chunk);
-      if (selected.length === 20) break;
+      selected.push({ ...chunk, paths });
+      if (selected.length === poolLimit) break;
     }
-    return { ready: true as const, i, bytes, state, selected, rawCandidateCount };
+    return { ready: true as const, i, bytes, state, selected, rawCandidateCount, lists };
   }
   private validateEvidence(i: IndexIdentity, evidence: VerifiedBookEvidence[]) {
     for (const e of evidence) {
@@ -401,6 +459,24 @@ export class BookRetrievalService implements BookRetrievalPort {
       end: e.end,
       cfi: e.cfi,
     };
+  }
+  async verifyRanges(userId: number, input: Parameters<BookRetrievalPort["verifyRanges"]>[1]) {
+    this.deadline(input.deadline, input.signal);
+    const identity = this.identity(userId, input);
+    const bytes = await this.bytes(identity);
+    const result = await this.worker.ranges(bytes, identity, input.ranges, input.deadline, input.signal);
+    const verified = result.candidates.length
+      ? await this.worker.replay(bytes, identity, result.candidates, input.deadline, input.signal) : [];
+    if (verified.length !== result.candidates.length) throw new ReaderToolException("TEXT_QUOTE_MISMATCH", "Structural replay count differs");
+    const candidates = result.candidates.map(e => {
+      const replay = verified.find(r => r.sectionIndex === e.sectionIndex && r.start === e.start && r.end === e.end);
+      if (!replay || replay.quote !== e.quote || replay.displayedQuote !== e.displayedQuote || replay.cfi !== e.cfi || replay.quoteHash !== e.quoteHash)
+        throw new ReaderToolException("TEXT_QUOTE_MISMATCH", "Structural evidence did not replay exactly");
+      return this.evidence(identity, replay);
+    });
+    this.deadline(input.deadline, input.signal);
+    this.fence.assertCurrent(userId, identity.artifact);
+    return { candidates, unavailable: result.unavailable };
   }
   async readContext(
     userId: number,

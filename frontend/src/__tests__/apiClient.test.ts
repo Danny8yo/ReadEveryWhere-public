@@ -27,7 +27,7 @@ describe('apiClient response parsing', () => {
       '<!doctype html><title>Cloudflare error</title>',
       { status: 502, headers: { 'content-type': 'text/html; charset=UTF-8' } },
     )));
-    const { request } = await import('../services/apiClient');
+    const { request } = await import('../shared/web/apiClient');
 
     await expect(request('/api/v1/user/zlibrary-config')).rejects.toMatchObject({
       code: 502,
@@ -42,7 +42,7 @@ describe('apiClient response parsing', () => {
       JSON.stringify(backendError),
       { status: 502, headers: { 'content-type': 'application/json' } },
     )));
-    const { request } = await import('../services/apiClient');
+    const { request } = await import('../shared/web/apiClient');
 
     await expect(request('/api/v1/user/zlibrary-config')).rejects.toEqual(backendError);
   });

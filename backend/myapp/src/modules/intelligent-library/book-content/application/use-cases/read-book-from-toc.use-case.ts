@@ -1,3 +1,4 @@
+import type { ContentExecution } from "../ports/content-execution";
 import { ReaderToolException } from "../../domain/reader-tool-error";
 import { ReadBookUseCase } from "./read-book.use-case";
 import { BookDocumentLoader } from "../book-document.loader";
@@ -9,18 +10,18 @@ export class ReadBookFromTocUseCase {
     private readonly readBook: ReadBookUseCase,
   ) {}
 
-  async plan(userId: number, bookId: number, input: TocReadInput) {
-    return planTocRead(await this.documents.load(userId, bookId), input);
+  async plan(userId: number, bookId: number, input: TocReadInput, execution?: ContentExecution) {
+    return planTocRead(await this.documents.load(userId, bookId, execution), input);
   }
 
-  async execute(userId: number, bookId: number, input: TocReadInput) {
-    const plan = await this.plan(userId, bookId, input);
+  async execute(userId: number, bookId: number, input: TocReadInput, execution?: ContentExecution) {
+    const plan = await this.plan(userId, bookId, input, execution);
     let text = "";
     const segments: Awaited<ReturnType<ReadBookUseCase["execute"]>>["segments"] = [];
     const units = [];
     for (const unit of plan.units) {
       const result = await this.readBook.execute(userId, { locator: unit.startLocator, endLocator: unit.endLocator,
-        direction: "forward", maxChars: TOC_BATCH_CHARACTERS });
+        direction: "forward", maxChars: TOC_BATCH_CHARACTERS }, execution);
       if (result.text.length !== unit.normalizedCharCount || result.continuation.next !== null) {
         throw new ReaderToolException("EXTRACTION_FAILED", `Incomplete TOC unit '${unit.nodeId}' (${unit.kind}).`);
       }

@@ -1,10 +1,10 @@
 // @vitest-environment happy-dom
 
-import { mount } from "@vue/test-utils";
 import { describe, expect, it } from "vitest";
-import ScraperModal from "../components/library/ScraperModal.vue";
+import ScraperModal from "../features/metadata/ui/ScraperModal.vue";
 import type { LibraryBook } from '../features/library/model/library';
 import { buildMetadataScrapeKeyword } from "../features/metadata/domain/keyword";
+import { mountInBody } from './helpers/bodyView';
 
 describe("metadata scrape keyword", () => {
   const book: Pick<LibraryBook, "id" | "title" | "isbn" | "authors" | "fileName"> = {
@@ -25,10 +25,12 @@ describe("metadata scrape keyword", () => {
   });
 
   it("fills the single-book scrape input with the title", () => {
-    const wrapper = mount(ScraperModal, {
+    // 封面流 P6：刮削弹窗经 UiOverlay 渲染到 body，从 body 查询
+    const wrapper = mountInBody(ScraperModal, {
       props: { isOpen: true, book: book as LibraryBook },
     });
 
     expect((wrapper.get("input").element as HTMLInputElement).value).toBe("活着");
+    wrapper.unmount();
   });
 });

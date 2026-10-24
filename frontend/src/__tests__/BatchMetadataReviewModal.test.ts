@@ -1,11 +1,15 @@
 // @vitest-environment happy-dom
 
-import { flushPromises, mount } from "@vue/test-utils";
-import { beforeEach, describe, expect, it, vi } from "vitest";
-import BatchMetadataReviewModal from "../components/library/BatchMetadataReviewModal.vue";
+import { enableAutoUnmount, flushPromises } from "@vue/test-utils";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import BatchMetadataReviewModal from "../features/metadata/ui/BatchMetadataReviewModal.vue";
 import type { LibraryBook } from '../features/library/model/library';
 import { applyMetadataToBook, scrapeMetadata } from "../features/metadata/api/metadataApi";
 import type { MatchedMetadataCandidate } from '../features/metadata/model/metadata';
+import { mountInBody } from './helpers/bodyView';
+
+// 封面流 P6：批量审核经 UiOverlay 渲染到 body，从 body 查询
+enableAutoUnmount(afterEach);
 
 vi.mock("../features/metadata/api/metadataApi", async () => {
   const actual = await vi.importActual<typeof import("../features/metadata/api/metadataApi")>("../features/metadata/api/metadataApi");
@@ -30,7 +34,7 @@ describe("BatchMetadataReviewModal", () => {
       .mockResolvedValueOnce([matched("edition", "candidate-1")])
       .mockResolvedValueOnce([matched("work", "candidate-2")]);
 
-    const wrapper = mount(BatchMetadataReviewModal, {
+    const wrapper = mountInBody(BatchMetadataReviewModal, {
       props: { isOpen: true, books, provider: "zlibrary" },
     });
     await flushPromises();
@@ -63,7 +67,7 @@ describe("BatchMetadataReviewModal", () => {
       .mockRejectedValueOnce(new Error("upstream timeout"))
       .mockResolvedValueOnce([matched("work", "retried")]);
 
-    const wrapper = mount(BatchMetadataReviewModal, {
+    const wrapper = mountInBody(BatchMetadataReviewModal, {
       props: { isOpen: true, books: [books[0]], provider: "douban" },
     });
     await flushPromises();

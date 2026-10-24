@@ -111,6 +111,13 @@ export function createBatchAnalysisController(state: ReturnType<typeof createBat
             state.batchAnalysisError = cause instanceof Error ? cause.message : '批量 AI 预分析提交失败';
         }
     };
+    /** 关闭结果面板：只在整批结束后清空；分析中面板就是进度，不能关 */
+    function dismissBatchResults() {
+        if (state.isBatchAnalyzing)
+            return;
+        state.batchAnalysisResults = [];
+        state.batchAnalysisError = null;
+    }
     function dispose() { disposed = true; generation++; stopBatchAnalysisPolling(); }
-    return { handleBatchAnalyze, dispose };
+    return { handleBatchAnalyze, dismissBatchResults, dispose };
 }

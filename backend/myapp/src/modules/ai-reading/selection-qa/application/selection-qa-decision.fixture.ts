@@ -1,17 +1,21 @@
-import type { QaModelInput, QaToolCall } from "./selection-qa-runtime.port";
-import { MAX_SELECTED_CANDIDATES } from "./selection-qa-decision";
+import type { QaModelInput, QaToolCall, QaModelPort } from "./selection-qa-runtime.port";
+/** Old action-specific tests get a separately scripted checker; this does not test semantic detection. */
+export function passingQualityFixture(model: QaModelPort, onCheck = () => {}): QaModelPort {
+  return new Proxy(model, { get(target, key) {
+    if (key !== "complete") return Reflect.get(target, key);
+    return async (...args: Parameters<QaModelPort["complete"]>) => {
+      if (args[2].tools?.some(t => t.function.name === "assess_answer")) {
+        onCheck();
+        return { usage: { promptTokens: 10, completionTokens: 2, totalTokens: 12 }, toolCalls: [{ id: "check", name: "assess_answer", arguments: '{"verdict":"pass","issues":[]}' }] };
+      }
+      return target.complete(...args);
+    };
+  } });
+}
 /** Scripted test decision; never used by production execution. */
 export function finishPlan(input: Pick<QaModelInput, "messages">): QaToolCall[] {
   const envelope = JSON.parse(input.messages[input.messages.length - 1].content!);
-  const candidates = new Set<string>(envelope.researchBudget.candidateIds);
-  let remaining = envelope.researchBudget.maxSelectedCandidateChars, count = 0;
-  const selected = envelope.VERIFIED_EVIDENCE.filter((e: { evidenceId: string; quote: string }) => {
-    if (count >= Math.min(8, MAX_SELECTED_CANDIDATES)) return false;
-    if (candidates.has(e.evidenceId) && e.quote.length > remaining) return false;
-    count++;
-    if (candidates.has(e.evidenceId)) remaining -= e.quote.length;
-    return true;
-  });
+  const selected = envelope.VERIFIED_EVIDENCE.slice(0, 8);
   return [{ id: "finish", name: "finish_research", arguments: JSON.stringify({
     informationNeeds: selected.length
       ? selected.map((e: { evidenceId: string }, index: number) => ({ text: `解释选文中的概念（证据${index + 1}）`, targetSource: "current_book", sourceName: "", evidenceIds: [e.evidenceId] }))

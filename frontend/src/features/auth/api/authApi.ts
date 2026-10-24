@@ -1,5 +1,5 @@
 import type { AuthResponse, RegistrationStatus } from '../model/auth';
-import { request } from '../../../services/apiClient';
+import { request } from '../../../shared/web/apiClient';
 export const getRegistrationStatus = (): Promise<RegistrationStatus> => {
     return request<RegistrationStatus>('/api/v1/auth/registration-status', {
         cache: 'no-store',

@@ -1,4 +1,5 @@
 import { Injectable } from "@nestjs/common";
+import { readFileSync } from "node:fs";
 import { StorageService } from "../../../../platform/storage/storage.service";
 import { SqliteService } from "../../../../platform/persistence/sqlite/sqlite.service";
 import type {
@@ -13,6 +14,8 @@ import type {
 } from "../../public";
 import { AttachBookFileUseCase } from "../application/use-cases/attach-book-file.use-case";
 import { DetachBookFileUseCase } from "../application/use-cases/detach-book-file.use-case";
+import { CatalogError } from "../domain/catalog.error";
+import { detectEbookFormat, mimeTypeForEbookFormat } from "./ebook-format.validator";
 
 @Injectable()
 export class CatalogAcquisitionAdapter implements
@@ -58,8 +61,18 @@ export class CatalogAcquisitionAdapter implements
     };
   }
 
+  /**
+   * Acquisition 交来的是上游下载的字节，文件名和 Content-Type 都由上游决定，不可信。
+   * 与导入一致按魔数检测格式，MIME 只取检测结果；识别不了就拒绝，避免任意内容以
+   * text/html 等类型入库后经文件路由在站点源下执行。
+   */
   attach(command: Readonly<AttachBookFileCommand>): Promise<AttachedBookFileProjection> {
-    return this.attachBookFile.execute(command);
+    const bytes = command.content ?? (command.localPath ? readFileSync(command.localPath) : null);
+    const format = bytes ? detectEbookFormat(bytes, command.fileName) : null;
+    if (!format) {
+      return Promise.reject(CatalogError.validation("file", "下载的文件不是有效的 EPUB、PDF、MOBI 或 AZW3"));
+    }
+    return this.attachBookFile.execute({ ...command, mimeType: mimeTypeForEbookFormat(format) });
   }
 
   detach(command: Readonly<DetachBookFileCommand>): void {

@@ -1,6 +1,7 @@
 # syntax=docker/dockerfile:1
 # Generic local build example. Build with: docker build -f backend/Dockerfile .
-FROM node:24-alpine
+# Node 补丁版本与仓库根 .nvmrc 保持一致；本项目依赖内置 node:sqlite，不可降到 Node 22。
+FROM node:24.22.1-alpine
 WORKDIR /workspace
 RUN apk add --no-cache qpdf
 COPY packages/epub-core/ packages/epub-core/

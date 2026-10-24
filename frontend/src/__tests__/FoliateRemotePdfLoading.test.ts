@@ -6,9 +6,9 @@ const { makePDF } = vi.hoisted(() => ({
   makePDF: vi.fn(),
 }));
 
-vi.mock('../lib/foliate-js/pdf.js', () => ({ makePDF }));
+vi.mock('../vendor/foliate-js/pdf.js', () => ({ makePDF }));
 
-import { makeBook } from '../lib/foliate-js/view.js';
+import { makeBook } from '../vendor/foliate-js/view.js';
 
 describe('Foliate remote PDF loading', () => {
   afterEach(() => {

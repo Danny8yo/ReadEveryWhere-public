@@ -73,7 +73,7 @@ describe("download state machine compatibility", () => {
     expect(context.attach).not.toHaveBeenCalled();
     expect(context.tasks.findTaskById(queued.id)).toMatchObject({
       status: "failed",
-      errorMessage: "Download failed",
+      errorMessage: "provider unavailable",
       localPath: null,
     });
   });
@@ -105,7 +105,7 @@ describe("download state machine compatibility", () => {
     expect(context.attach).toHaveBeenCalledTimes(1);
     expect(context.tasks.findTaskById(queued.id)).toMatchObject({
       status: "failed",
-      errorMessage: "Download failed",
+      errorMessage: "attach failed",
     });
   });
 
@@ -121,7 +121,7 @@ describe("download state machine compatibility", () => {
     expect(context.attachedFiles).toHaveLength(1);
     expect(context.tasks.findTaskById(queued.id)).toMatchObject({
       status: "failed",
-      errorMessage: "Download failed",
+      errorMessage: "markCompleted failed",
       localPath: null,
     });
   });

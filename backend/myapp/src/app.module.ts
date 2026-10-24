@@ -14,10 +14,11 @@ import {
 } from "./modules/intelligent-library/public";
 import { AcquisitionModule } from "./modules/acquisition/public";
 import { ReadingStateModule } from "./modules/reading-state/reading-state.module";
-import { AiReadingModule } from "./modules/ai-reading/public";
+import { SelectionQaModule } from "./modules/ai-reading/selection-qa/selection-qa.module";
 import { ReaderToolsHttpModule } from "./interface-adapters/reader-tools-http/reader-tools-http.module";
 import { MetadataIntegrationsModule } from "./integrations/metadata-integrations.module";
 import { DeepSeekIntegrationModule } from "./integrations/deepseek/public";
+import { DashScopeIntegrationModule } from "./integrations/dashscope/public";
 import { AiModelSupportModule } from "./support/ai-model/public";
 
 @Global()
@@ -57,11 +58,12 @@ class MetadataIntegrationBindingsModule {}
         req.user?.userId ? `user:${req.user.userId}` : `ip:${req.ip}`,
     }),
     DeepSeekIntegrationModule,
+    DashScopeIntegrationModule,
     AiModelSupportModule,
     IdentityModule,
     MetadataIntegrationBindingsModule,
     IntelligentLibraryModule,
-    AiReadingModule,
+    SelectionQaModule,
     AcquisitionModule,
     ReadingStateModule,
     ReaderToolsHttpModule,

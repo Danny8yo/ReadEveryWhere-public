@@ -1,5 +1,8 @@
+import { createQaReadingTools } from "./tools/qa-reading-tools";
+import { createQaDeliveryTools } from "./tools/qa-delivery-tools";
+import { QaToolRegistry } from "./tools/qa-tool-registry";
 import { QA_POLICY } from "./selection-qa-runtime.port";
-import { finishPlan } from "./selection-qa-decision.fixture";
+import { finishPlan, passingQualityFixture } from "./selection-qa-decision.fixture";
 import { createHash } from "node:crypto";
 import { BOOK_MAX_EXPAND_CHARS } from "../../../intelligent-library/public/book-retrieval.port";
 import { SelectionQaExecutor } from "./selection-qa.executor";
@@ -26,7 +29,7 @@ const usage: QaUsage = {
   totalTokens: 12,
 };
 function evidence(start = 0, length = 100): QaEvidence {
-  const quote = "文".repeat(length);
+  const quote = start === 0 ? "当前选区" + "文".repeat(length - 4) : "文".repeat(length);
   return {
     sectionIndex: 0,
     href: "chapter.xhtml",
@@ -80,7 +83,7 @@ function claim(): QaClaim {
       citations: [],
       errorCode: null,
       retryOfTurnId: null,
-      deadline: now + 60000,
+      deadline: now + QA_POLICY.deadlineMs,
       lastSequence: 0,
       createdAt: now,
       updatedAt: now,
@@ -111,9 +114,8 @@ function claim(): QaClaim {
 class StrictStore implements QaRuntimeStore {
   active = true;
   models = 0;
-  standardModels = 0;
-  repairModels = 0;
-  reservedModelKinds: Array<"planning" | "protocol_repair" | "final"> = [];
+  finalReserved = false;
+  reservedModelKinds: Array<"decision" | "final" | "check"> = [];
   tools = 0;
   chars = 0;
   answer = "";
@@ -142,19 +144,11 @@ class StrictStore implements QaRuntimeStore {
   renew(): void {
     this.guard();
   }
-  reserveModel(_claim: QaClaim, kind: "planning" | "protocol_repair" | "final"): void {
+  reserveModel(_claim: QaClaim, kind: "decision" | "final" | "check"): void {
     this.guard();
-    if (this.models >= QA_POLICY.maxModelCalls) throw new SelectionQaError("MODEL_BUDGET_EXHAUSTED");
-    if (kind === "protocol_repair") {
-      if (this.repairModels >= QA_POLICY.maxProtocolRepairAttempts)
-        throw new SelectionQaError("MODEL_BUDGET_EXHAUSTED");
-      this.repairModels++;
-    } else {
-      const limit = kind === "planning" ? QA_POLICY.maxPlanningCalls : QA_POLICY.maxPlanningCalls + 1;
-      if (this.standardModels >= limit)
-        throw new SelectionQaError("MODEL_BUDGET_EXHAUSTED");
-      this.standardModels++;
-    }
+    if (this.models >= QA_POLICY.maxModelCalls - (kind === "decision" ? 2 : kind === "final" ? 1 : 0))
+      throw new SelectionQaError("MODEL_BUDGET_EXHAUSTED");
+    this.finalReserved = kind === "final";
     this.models++;
     this.reservedModelKinds.push(kind);
   }
@@ -192,6 +186,8 @@ class StrictStore implements QaRuntimeStore {
     expect(this.saved.some((x) => x.evidenceId === e.evidenceId)).toBe(false);
     this.saved.push(e);
   }
+  beginAnswer(): void { this.guard(); this.answer = ""; this.citations = []; }
+  quality(): void { this.guard(); }
   append(_c: QaClaim, text: string, citations: QaSavedEvidence[]): void {
     this.guard();
     expect(this.answer.length + text.length).toBeLessThanOrEqual(64000);
@@ -251,6 +247,7 @@ function harness(initialLength = 100) {
       expect(input.maxChars).toBeLessThanOrEqual(BOOK_MAX_EXPAND_CHARS);
       return { candidates: input.evidence, contextWindows: input.evidence.map(e => ({ sectionIndex: e.sectionIndex, start: e.start, end: e.end, hitRanges: [{ sectionIndex: e.sectionIndex, start: e.start, end: e.end }] })), contextTruncated: false };
     }),
+    searchPool: jest.fn(async () => { throw new Error("unused"); }), verifyCandidates: jest.fn(async () => { throw new Error("unused"); }),
     replay: jest.fn(async (_user, _selection, ranges) => {
       bookCall();
       return ranges;
@@ -261,7 +258,7 @@ function harness(initialLength = 100) {
     count: () => 100,
     complete: jest.fn(async (_u, _s, input) => {
       modelCall();
-      return { toolCalls: finishPlan(input), usage };
+      return { toolCalls: store.models === 1 ? [{ id: "selection", name: "read_selection_context", arguments: "{}" }] : finishPlan(input), usage };
     }),
     stream: jest.fn(async (_user, _snapshot, input, onDelta) => {
       modelCall();
@@ -279,8 +276,9 @@ function harness(initialLength = 100) {
     books,
     controller,
     modelCall,
+    bookCall,
     run: () =>
-      new SelectionQaExecutor(store, model, books, { get: (_userId, bookId) => ({ bookId, title: "大型网站技术架构" }) }).run(c, controller.signal),
+      new SelectionQaExecutor(store, passingQualityFixture(model, modelCall), books, { get: (_userId, bookId) => ({ bookId, title: "大型网站技术架构" }) }, env => new QaToolRegistry([...createQaReadingTools(env), ...createQaDeliveryTools(env.ledger, env.currentBook)])).run(c, controller.signal),
   };
 }
 const search = (id: string): QaToolCall => ({
@@ -290,66 +288,72 @@ const search = (id: string): QaToolCall => ({
 });
 
 describe("independent executor budget and streaming protocol", () => {
-  it("does not consume the persisted final slot as planning after a worker restart", async () => {
+  it("delivers a truthful limited result when only the persisted final slot remains", async () => {
     const h = harness();
-    h.store.models = QA_POLICY.maxPlanningCalls;
-    h.store.standardModels = QA_POLICY.maxPlanningCalls;
-
-    await h.run();
-
-    expect(h.store.reservedModelKinds).toEqual([]);
-    expect(h.model.complete).not.toHaveBeenCalled();
-    expect(h.model.stream).not.toHaveBeenCalled();
-    expect(h.store.terminal).toEqual({
-      status: "failed",
-      reason: "MODEL_BUDGET_EXHAUSTED",
+    h.store.models = QA_POLICY.maxModelCalls - 2;
+    h.model.stream = jest.fn(async (_u, _s, _input, onDelta) => {
+      expect(h.store.models).toBe(QA_POLICY.maxModelCalls - 1);
+      await onDelta("Available findings only; the research budget is exhausted.");
+      return { usage, finishReason: "stop" };
     });
+    await h.run();
+    expect(h.store.reservedModelKinds).toEqual(["final"]);
+    expect(h.model.complete).not.toHaveBeenCalled();
+    expect(h.model.stream).toHaveBeenCalledTimes(1);
+    expect(h.store.answer).toContain("budget is exhausted");
+    expect(h.store.terminal).toEqual({ status: "failed", reason: "RESEARCH_BUDGET_EXHAUSTED" });
   });
-  it("reserves final model call while processing repeated multi-tool planning rounds", async () => {
+  it("permits a third search and preserves the final model reservation", async () => {
     const h = harness();
     let round = 0;
+    h.books.searchCandidates = jest.fn(async (_u, _s, input) => {
+      h.bookCall();
+      expect(input.maxChars).toBeLessThanOrEqual(QA_POLICY.maxReadChars - h.store.chars);
+      return { state: "ready" as const, candidates: [evidence(10000 + round * 1000, 100)], unavailable: [], budgetLimited: false, contextTruncated: false };
+    });
     h.model.complete = jest.fn(async (_u, _s, input) => {
-      h.modelCall();
-      round++;
-      return {
-        toolCalls: round < 3 ? [{ ...search(`${round}a`), arguments: JSON.stringify({ informationNeed: `解释本书概念${round}`, queries: { query1: `知识${round}`, query2: "", query3: "", query4: "" } }) }] : finishPlan(input),
-        usage,
-      };
+      h.modelCall(); round++;
+      return { toolCalls: round < 4 ? [{ ...search(`${round}a`), arguments: JSON.stringify({ informationNeed: `解释本书概念${round}`, queries: { query1: `知识${round}`, query2: "", query3: "", query4: "" } }) }] : finishPlan(input), usage };
     });
     await h.run();
-    expect(h.store.models).toBe(4);
-    expect(h.model.complete).toHaveBeenCalledTimes(3);
+    expect(h.store.models).toBe(6);
+    expect(h.model.complete).toHaveBeenCalledTimes(4);
     expect(h.model.stream).toHaveBeenCalledTimes(1);
-    expect(h.store.reservedModelKinds).toEqual(["planning", "planning", "planning", "final"]);
-    expect(h.store.tools).toBe(4);
-    expect(h.books.context).toHaveBeenCalledTimes(1);
-    expect(h.books.searchCandidates).toHaveBeenCalledTimes(2);
+    expect(h.store.reservedModelKinds).toEqual(["decision", "decision", "decision", "decision", "final", "check"]);
+    expect(h.store.tools).toBe(3);
+    expect(h.books.context).not.toHaveBeenCalled();
+    expect(h.books.searchCandidates).toHaveBeenCalledTimes(3);
     expect(h.store.terminal?.status).toBe("completed");
   });
-  it("charges initial and historical reads and clamps retrieval to the remaining 24000 characters", async () => {
+  it("charges explicit selection, historical and expansion reads before clamping search to 24000", async () => {
     const h = harness(4000);
-    h.store.historyValue.historicalEvidence = [0, 1].map((n) => ({
-      ...evidence(10000 + n * 4000, 4000),
-      evidenceId: `old-${n}`,
-      turnId: "previous",
-    }));
+    h.store.historyValue.historicalEvidence = [0, 1].map(n => ({ ...evidence(10000 + n * 4000, 4000), evidenceId: `old-${n}`, turnId: "previous" }));
+    h.books.searchCandidates = jest.fn(async (_u, _s, input) => {
+      h.bookCall();
+      expect(input.maxChars).toBe(8000);
+      return { state: "ready" as const, candidates: [evidence(50000, input.maxChars)], unavailable: [], budgetLimited: false, contextTruncated: false };
+    });
     h.model.complete = jest.fn(async (_u, _s, input) => {
       h.modelCall();
-      return { toolCalls: h.store.models < 3 ? [search(`q${h.store.models}`)] : finishPlan(input), usage };
+      const calls: Record<number, QaToolCall[]> = {
+        1: [{ id: "selection", name: "read_selection_context", arguments: "{}" }],
+        2: [{ id: "history", name: "read_history_evidence", arguments: JSON.stringify({ evidenceIds: ["old-0", "old-1"] }) }],
+        3: [{ id: "expand", name: "expand_evidence", arguments: JSON.stringify({ evidenceIds: [h.store.saved[0]?.evidenceId], maxWindowChars: 4000 }) }],
+        4: [search("query")],
+      };
+      return { toolCalls: calls[h.store.models] ?? finishPlan(input), usage };
     });
     await h.run();
     expect(h.store.chars).toBe(24000);
     expect(h.store.tools).toBe(4);
+    expect(h.books.context).toHaveBeenCalledTimes(1);
     expect(h.books.replay).toHaveBeenCalledTimes(1);
     expect(h.books.searchCandidates).toHaveBeenCalledTimes(1);
     expect(h.books.expandSelected).toHaveBeenCalledTimes(1);
-    expect(h.store.models).toBe(4);
-    expect(
-      h.store.saved.filter((e) => e.importedFromTurnId === "previous"),
-    ).toHaveLength(2);
-    expect(h.store.saved.every((e) => !e.evidenceId.startsWith("old-"))).toBe(
-      true,
-    );
+    expect(h.store.models).toBe(7);
+    expect(h.store.saved.filter(e => e.importedFromTurnId === "previous")).toHaveLength(2);
+    expect(h.store.saved.every(e => !e.evidenceId.startsWith("old-"))).toBe(true);
+    expect(h.store.terminal?.status).toBe("completed");
   });
   it("accepts a citation split at every character and emits its provenance only once", async () => {
     const h = harness();
@@ -443,13 +447,11 @@ describe("independent executor budget and streaming protocol", () => {
     h.store.historyValue.historicalEvidence = [old];
     h.model.complete = jest.fn(async (_u, _s, input) => {
       h.modelCall();
-      expect(h.books.replay).toHaveBeenCalledWith(
-        1,
-        h.c.conversation.selection,
-        [old],
-        h.c.turn.deadline,
-        h.controller.signal,
-      );
+      if (h.store.models === 1) {
+        expect(h.books.replay).not.toHaveBeenCalled();
+        return { toolCalls: [{ id: "history", name: "read_history_evidence", arguments: JSON.stringify({ evidenceIds: [old.evidenceId] }) }], usage };
+      }
+      expect(h.books.replay).toHaveBeenCalledWith(1, h.c.conversation.selection, [old], h.c.turn.deadline - QA_POLICY.finalReserveMs, expect.any(AbortSignal));
       return { toolCalls: finishPlan(input), usage };
     });
     h.model.stream = jest.fn(async (_u, _s, _i, onDelta) => {
@@ -462,22 +464,25 @@ describe("independent executor budget and streaming protocol", () => {
       return { usage, finishReason: "stop" };
     });
     await h.run();
-    expect(h.store.tools).toBe(2);
-    expect(h.store.chars).toBe(300);
+    expect(h.store.tools).toBe(1);
+    expect(h.store.chars).toBe(200);
     expect(h.store.citations[0].start).toBe(old.start);
   });
   it("rejects late deltas after terminal completion without changing persisted answer", async () => {
     const h = harness();
     let emit!: (text: string) => Promise<void>;
+    let answer = "";
     h.model.stream = jest.fn(async (_u, _s, _i, onDelta) => {
       h.modelCall();
       emit = onDelta;
-      await onDelta("Complete");
+      answer = `Complete [[evidence:${h.store.saved[0].evidenceId}]]`;
+      await onDelta(answer);
       return { usage, finishReason: "stop" };
     });
     await h.run();
-    await expect(emit("LATE")).rejects.toMatchObject({ code: "LEASE_LOST" });
-    expect(h.store.answer).toBe("Complete");
+    expect(h.store.terminal).toEqual({ status: "completed", reason: null });
+    await expect(emit("LATE")).rejects.toMatchObject({ code: "ANSWER_VERSION_FROZEN" });
+    expect(h.store.answer).toBe(answer);
   });
   it("rejects late deltas after user stop even when the provider resolves afterwards", async () => {
     const h = harness();
@@ -515,21 +520,17 @@ describe("independent executor budget and streaming protocol", () => {
   });
   it("does not expose unverified historical evidence after replay failure", async () => {
     const h = harness();
-    h.store.historyValue.historicalEvidence = [
-      { ...evidence(2000, 200), evidenceId: "old-id", turnId: "previous" },
-    ];
-    h.books.replay = jest.fn(async () => {
-      throw new SelectionQaError("CONTENT_VERSION_CHANGED");
+    h.store.historyValue.historicalEvidence = [{ ...evidence(2000, 200), evidenceId: "old-id", turnId: "previous" }];
+    h.model.complete = jest.fn(async () => {
+      h.modelCall();
+      return { toolCalls: [{ id: "history", name: "read_history_evidence", arguments: JSON.stringify({ evidenceIds: ["old-id"] }) }], usage };
     });
+    h.books.replay = jest.fn(async () => { throw new SelectionQaError("CONTENT_VERSION_CHANGED"); });
     await h.run();
-    expect(h.model.complete).not.toHaveBeenCalled();
+    expect(h.model.complete).toHaveBeenCalledTimes(1);
     expect(h.model.stream).not.toHaveBeenCalled();
-    expect(h.store.saved).toHaveLength(1);
-    expect(h.store.saved[0].importedFromTurnId).toBeUndefined();
-    expect(h.store.terminal).toEqual({
-      status: "failed",
-      reason: "CONTENT_VERSION_CHANGED",
-    });
+    expect(h.store.saved).toHaveLength(0);
+    expect(h.store.terminal).toEqual({ status: "failed", reason: "CONTENT_VERSION_CHANGED" });
   });
   it("fails an unfinished citation marker and keeps only previously accepted text", async () => {
     const h = harness();

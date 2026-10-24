@@ -2,6 +2,7 @@ import {
   inject,
   provide,
   shallowRef,
+  ref,
   reactive,
   watch,
   onScopeDispose,
@@ -12,9 +13,9 @@ import {
   createLibraryQueryCache,
   type LibraryInvalidationPort,
 } from "../domain/queryCache";
-import { fetchLibraryBooks } from "../api/libraryApi";
+import { fetchLibraryBooks, getLibraryBook } from "../api/libraryApi";
 import { getLibrarySyncState, openLibraryStream } from "../api/librarySyncApi";
-import { getBaseUrl, getSessionVersion } from "../../../services/apiClient";
+import { getBaseUrl, getSessionVersion } from "../../../shared/web/apiClient";
 import type { LoadLibraryParams } from "../domain/library";
 export function createLibrarySession(
   userId: number,
@@ -35,6 +36,8 @@ export function createLibrarySession(
     connection: "connecting",
     error: null as string | null,
   });
+  const changeListeners = new Set<() => void>();
+  const notifyChange = () => changeListeners.forEach((fn) => fn());
   const cache = createLibraryQueryCache(
     async (q) => {
       const data = await fetchLibraryBooks(q);
@@ -68,6 +71,7 @@ export function createLibrarySession(
         cache.invalidateDownloadSnapshots();
         cache.setPaused(false);
         cache.revalidate();
+        notifyChange();
         if (streamHealthy) {
           status.error = null;
           status.connection = "connected";
@@ -97,7 +101,9 @@ export function createLibrarySession(
       void recover();
     },
     change(version) {
-      if (live()) cache.observeVersion(version);
+      if (!live()) return;
+      cache.observeVersion(version);
+      notifyChange();
     },
     progress(event) {
       if (live()) cache.applyProgress(event);
@@ -124,8 +130,14 @@ export function createLibrarySession(
     browse,
     status,
     recover,
+    /** 书库有变化（含重连后的核对）；持有某本书的界面据此确认它是否仍存在。 */
+    onChange(listener: () => void) {
+      changeListeners.add(listener);
+      return () => changeListeners.delete(listener);
+    },
     dispose() {
       disposed = true;
+      changeListeners.clear();
       stop();
       cache.dispose();
       window.removeEventListener("focus", resume);
@@ -161,6 +173,48 @@ export function useLibrarySession() {
   const ref = inject(sessionKey);
   if (!ref?.value) throw new Error("缺少已验证的书架会话");
   return ref.value;
+}
+/** 书库有变化时向服务器确认这本书是否已在其他设备删除；书架会话重建后跟随新会话。 */
+export function useBookDeletion(bookId: () => number | null) {
+  const current = inject(sessionKey);
+  if (!current) throw new Error("缺少书架会话");
+  const deleted = ref(false);
+  let checking = false,
+    checkAgain = false;
+  async function check() {
+    const id = bookId();
+    if (id === null || deleted.value) return;
+    if (checking) {
+      checkAgain = true;
+      return;
+    }
+    checking = true;
+    try {
+      await getLibraryBook(id);
+    } catch (error) {
+      // 只认"书不存在"；网络等错误由书架连接状态呈现，下次变化再确认。
+      const notFound =
+        typeof error === "object" && error !== null && "code" in error && error.code === 40401;
+      if (notFound && bookId() === id) deleted.value = true;
+    } finally {
+      checking = false;
+      if (checkAgain) {
+        checkAgain = false;
+        void check();
+      }
+    }
+  }
+  watch(bookId, () => {
+    deleted.value = false;
+  });
+  watch(
+    current,
+    (session, _previous, onCleanup) => {
+      if (session) onCleanup(session.onChange(() => void check()));
+    },
+    { immediate: true },
+  );
+  return deleted;
 }
 export function useLibraryInvalidation(): LibraryInvalidationPort {
   const session = useLibrarySession();

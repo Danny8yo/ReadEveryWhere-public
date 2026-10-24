@@ -1,4 +1,4 @@
-import { Body, Controller, Delete, Get, Patch, Put, Req } from "@nestjs/common";
+import { Body, Controller, Delete, Get, Patch, Post, Put, Req } from "@nestjs/common";
 import { Throttle } from "@nestjs/throttler";
 import type { Request } from "express";
 import { AppException } from "../../../../../platform/http/app-exception";
@@ -27,6 +27,20 @@ export class UserZlibraryConfigController {
   }
 
   @Throttle({ default: { limit: 10, ttl: 60000 } })
+  @Post("probe")
+  async probe(@Req() req: Request, @Body() dto: UpdateBaseUrlDto) {
+    if (!req.user?.userId) throw AppException.unauthorized("Missing user context");
+    return this.userZlibraryConfigService.probe(safeBaseUrl(dto.baseUrl));
+  }
+
+  @Throttle({ default: { limit: 5, ttl: 60000 } })
+  @Post("discover-domains")
+  async discoverDomains(@Req() req: Request, @Body() dto: UpdateBaseUrlDto) {
+    if (!req.user?.userId) throw AppException.unauthorized("Missing user context");
+    return this.userZlibraryConfigService.discoverDomains(safeBaseUrl(dto.baseUrl));
+  }
+
+  @Throttle({ default: { limit: 10, ttl: 60000 } })
   @Put("cookies")
   async importCookies(@Req() req: Request, @Body() dto: ImportZlibraryCookiesDto) {
     const userId = req.user?.userId;
@@ -39,12 +53,19 @@ export class UserZlibraryConfigController {
 
   @Throttle({ default: { limit: 10, ttl: 60000 } })
   @Patch("base-url")
-  updateBaseUrl(@Req() req: Request, @Body() dto: UpdateBaseUrlDto) {
+  async updateBaseUrl(@Req() req: Request, @Body() dto: UpdateBaseUrlDto) {
     const userId = req.user?.userId;
     if (!userId) {
       throw AppException.unauthorized("Missing user context");
     }
-    return this.userZlibraryConfigService.updateBaseUrl(userId, safeBaseUrl(dto.baseUrl));
+    try {
+      return await this.userZlibraryConfigService.updateBaseUrl(userId, safeBaseUrl(dto.baseUrl));
+    } catch (error) {
+      if (error instanceof Error && error.message === "ZLIBRARY_CREDENTIALS_REQUIRED_FOR_BASE_URL") {
+        throw AppException.conflict("baseUrl", "请先验证 Zlibrary 凭据后再切换地址");
+      }
+      throw error;
+    }
   }
 
   @Get()
@@ -67,5 +88,10 @@ export class UserZlibraryConfigController {
 }
 
 function safeBaseUrl(value: string): string {
-  return assertSafeOutboundUrl(value, { field: "baseUrl", httpsOnly: true }).replace(/\/+$/, "");
+  const normalized = assertSafeOutboundUrl(value, { field: "baseUrl", httpsOnly: true });
+  const parsed = new URL(normalized);
+  if (parsed.pathname !== "/" || parsed.search || parsed.hash) {
+    throw AppException.validation("baseUrl", "Base URL must be an HTTPS origin without path or query");
+  }
+  return parsed.origin;
 }

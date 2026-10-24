@@ -57,3 +57,12 @@ export type {
   TokenEstimator,
   TokenEstimatorCatalog,
 } from "../application/ports/token-estimator.port";
+export {
+  RERANKER_SETTINGS,
+  RerankerError,
+  type RerankerFailureKind,
+  type RerankerIdentity,
+  type RerankerPort,
+  type RerankerSettings,
+  type RerankerUsage,
+} from "../application/ports/reranker.port";

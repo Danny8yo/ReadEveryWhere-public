@@ -114,4 +114,5 @@
 - `/stream` 需要服务端会话 Cookie；`/file` 使用 `file-access` 生成的短期 token，适合 PDF.js/iframe 等不便携带 Header 的读取场景。
 - signed token 绑定 userId、bookId 和过期时间，默认 7200 秒。
 - 两个流接口都支持 `200/206/416` 和 `Accept-Ranges`，不经过普通 JSON 成功包装。
+- 文件响应的 `Content-Type` 只会是 EPUB/PDF/MOBI/AZW3 四种 MIME 之一，库中其他历史值一律按 `application/octet-stream` 下发；并带 `Content-Security-Policy: sandbox; default-src 'none'` 与 `X-Content-Type-Options: nosniff`，直接在浏览器打开也不会以站点源执行内容。阅读器用 fetch 读取字节，不受影响。客户端中途断开时立即关闭文件句柄。
 - current pointer 缺失返回 40401；active artifact 指向的物理文件缺失返回 40403。最终 Schema 不再允许“文件行存在但路径/状态不可用”的中间态。磁盘权限或其他 I/O 错误不伪装成 404，而是交由内部错误处理。Presentation 只经 Catalog 内部 `BookFileStreamingQueryPort` 取得最小文件投影，不直接查询 SQLite。

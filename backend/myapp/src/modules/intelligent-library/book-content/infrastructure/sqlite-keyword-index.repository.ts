@@ -1,4 +1,5 @@
-import { PositionIndexFiles } from "./position-index-file";
+import { PositionIndexFiles, searchRecallList } from "./position-index-file";
+import type { DualRecallList } from "@readeverywhere/epub-core/keywords";
 import { randomUUID } from "node:crypto";
 import type { DatabaseSync } from "node:sqlite";
 import type {
@@ -106,8 +107,8 @@ export class SqliteKeywordIndexRepository implements KeywordIndexRepository {
           now,
           now,
         );
-      this.db.prepare("INSERT INTO content_index_files(generation_id,format) VALUES(?,'unigram-file-v1')").run(id);
-      this.files.create(id,i.key);
+      this.db.prepare("INSERT INTO content_index_files(generation_id,format) VALUES(?,?)").run(id,i.format);
+      this.files.create(id,i.key,i.format);
       return {
         generation: {
           id,
@@ -139,7 +140,7 @@ export class SqliteKeywordIndexRepository implements KeywordIndexRepository {
       const insert = this.db.prepare(
         "INSERT INTO content_index_position_chunks(generation_id,user_id,book_id,ordinal,section_index,href,start_offset,end_offset,quote,quote_hash,displayed_quote,cfi,tokens)VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)",
       );
-      const fileRows: {id:number;tokens:string}[] = [];
+      const fileRows: {id:number;tokens:string;bigramTokens?:string;wordTokens?:string}[] = [];
       chunks.forEach((c, n) => {
         if (c.ordinal !== row.chunk_count + n)
           throw new Error(
@@ -160,9 +161,9 @@ export class SqliteKeywordIndexRepository implements KeywordIndexRepository {
           c.cfi,
           c.tokens,
         );
-        fileRows.push({id:Number(inserted.lastInsertRowid),tokens:c.tokens});
+        fileRows.push({id:Number(inserted.lastInsertRowid),tokens:c.tokens,bigramTokens:c.bigramTokens,wordTokens:c.wordTokens});
       });
-      this.files.append(id,fileRows);
+      this.files.append(id,i.format,fileRows);
       this.db
         .prepare(
           "UPDATE content_index_generations SET state='building',chunk_count=chunk_count+?,updated_at=? WHERE id=?",
@@ -201,7 +202,7 @@ export class SqliteKeywordIndexRepository implements KeywordIndexRepository {
         throw new Error("INDEX_FENCED: incomplete generation cannot publish");
     };
     validate();
-    const sealed=this.files.seal(id,i.key,result.chunkCount);
+    const sealed=this.files.seal(id,i.key,i.format,result.chunkCount);
     this.transaction(() => {
       validate();
       this.db.prepare("UPDATE content_index_files SET sha256=?,byte_count=? WHERE generation_id=?").run(sealed.sha256,sealed.byteCount,id);
@@ -224,19 +225,21 @@ export class SqliteKeywordIndexRepository implements KeywordIndexRepository {
       )
       .run(error, Date.now(), id, owner);
   }
-  search(i: IndexIdentity, id: string, phrases: string[]): RankedChunk[] {
-    if (!phrases.length) return [];
-    const generation = this.db.prepare(`SELECT f.sha256,f.byte_count FROM content_index_generations g
+  private published(i: IndexIdentity, id: string) {
+    const generation = this.db.prepare(`SELECT f.sha256,f.byte_count,f.format FROM content_index_generations g
       JOIN content_index_current p ON p.generation_id=g.id
       LEFT JOIN content_index_files f ON f.generation_id=g.id
       WHERE p.identity_key=? AND g.id=? AND g.state='ready' AND g.user_id=? AND g.book_id=?
       AND g.artifact_id=? AND g.file_checksum=? AND g.extractor_version=? AND g.normalization_version=?
       AND g.chunker_version=? AND g.tokenizer_version=?`).get(i.key,id,i.userId,i.bookId,i.artifact.artifactId,
       i.contentRevision.fileChecksum,i.contentRevision.extractorVersion,i.contentRevision.normalizationVersion,
-      i.version.chunkerVersion,i.version.tokenizerVersion) as {sha256:string;byte_count:number}|undefined;
-    if(!generation) return [];
+      i.version.chunkerVersion,i.version.tokenizerVersion) as {sha256:string;byte_count:number;format:string}|undefined;
+    if(!generation) return null;
     if(!generation.sha256 || !generation.byte_count) throw new Error("INDEX_CORRUPT: missing published file metadata");
-    const ranked=this.files.search(id,i.key,generation.sha256,generation.byte_count,phrases.map(phrase=>({phrase,weight:1})));
+    if(generation.format!==i.format) throw new Error("INDEX_CORRUPT: generation file format differs from its identity");
+    return generation;
+  }
+  private chunks(i: IndexIdentity, id: string, ranked: {id:number;score:number}[]): RankedChunk[] {
     const get=this.db.prepare(`SELECT id,section_index AS sectionIndex,href,start_offset AS start,end_offset AS end,quote,quote_hash AS quoteHash,displayed_quote AS displayedQuote,cfi,tokens
       FROM content_index_position_chunks WHERE id=? AND generation_id=? AND user_id=? AND book_id=?`);
     return ranked.map(row=>{
@@ -244,5 +247,22 @@ export class SqliteKeywordIndexRepository implements KeywordIndexRepository {
       if(!chunk) throw new Error("INDEX_CORRUPT: file references missing chunk");
       return {...chunk,score:row.score};
     });
+  }
+  search(i: IndexIdentity, id: string, phrases: string[]): RankedChunk[] {
+    if (i.format !== "unigram-file-v1") throw new Error("Phrase search requires a unigram-file-v1 generation");
+    if (!phrases.length) return [];
+    const generation=this.published(i,id);
+    if(!generation) return [];
+    const ranked=this.files.search(id,i.key,generation.sha256,generation.byte_count,phrases.map(phrase=>({phrase,weight:1})));
+    return this.chunks(i,id,ranked);
+  }
+  searchLists(i: IndexIdentity, id: string, lists: DualRecallList[], limit: number) {
+    if (i.format !== "dual-file-v1") throw new Error("Recall lists require a dual-file-v1 generation");
+    if (!lists.length) return [];
+    const generation=this.published(i,id);
+    if(!generation) return [];
+    const results=this.files.read(id,i.key,i.format,generation.sha256,generation.byte_count,
+      db=>lists.map(list=>({list,...searchRecallList(db,list,limit)})));
+    return results.map(({list,considered,minimum,hits})=>({list,considered,minimum,hits:this.chunks(i,id,hits)}));
   }
 }

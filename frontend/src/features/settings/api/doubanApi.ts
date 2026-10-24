@@ -1,5 +1,5 @@
 import type { DoubanConfig } from '../model/douban';
-import { request } from '../../../services/apiClient';
+import { request } from '../../../shared/web/apiClient';
 export const doubanApi = {
     getConfig: (): Promise<DoubanConfig> => {
         return request<DoubanConfig>('/api/v1/metadata/douban-config');

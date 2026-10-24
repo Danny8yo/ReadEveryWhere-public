@@ -1,18 +1,18 @@
 import type { BookDocument } from "../../domain/book-document.types";
-import { ModelToolResultPresenter } from "../../../../ai-reading/application/model-tool-result.presenter";
 import { BookDocumentLoader } from "../book-document.loader";
 import { ReadBookUseCase } from "./read-book.use-case";
 import { GetBookTocUseCase } from "./get-book-toc.use-case";
 
 describe("GetBookTocUseCase navigation", () => {
-  it("returns a backward-readable endLocator and keeps it in the internal model projection", async () => {
+  it("returns a backward-readable endLocator across EPUB sections", async () => {
     const document = spanningChapterDocument();
     const loader = { load: jest.fn().mockResolvedValue(document) } as unknown as BookDocumentLoader;
     const toc = new GetBookTocUseCase(loader);
     const result = await toc.execute(1, 42, { mode: "navigation", nodeIds: ["chapter-1"] });
-    const projected = new ModelToolResultPresenter().present("book_toc_navigation", result) as any;
+    const entry = result.entries[0];
+    if (!("endLocator" in entry)) throw new Error("Navigation result must include endLocator");
 
-    expect(projected.entries[0]).toEqual({
+    expect(entry).toMatchObject({
       nodeId: "chapter-1",
       label: "Chapter One",
       startLocator: minimumLocator(0, 0),
@@ -25,7 +25,7 @@ describe("GetBookTocUseCase navigation", () => {
     );
     const tail = await readBook.execute(1, {
       locator: {
-        ...projected.entries[0].endLocator,
+        ...entry.endLocator,
         bookId: 42,
         contentRevision: document.revision,
       },

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { toLibraryDetail } from '../features/library/domain/detail';
+import { toLibraryDetail } from '../features/book-detail/domain/detail';
 import type { LibraryBook } from '../features/library/model/library';
 
 const book = (fileSize: number | null): LibraryBook => ({

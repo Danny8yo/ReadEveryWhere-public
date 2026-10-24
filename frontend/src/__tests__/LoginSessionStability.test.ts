@@ -1,11 +1,11 @@
 // @vitest-environment happy-dom
 import { flushPromises, mount } from '@vue/test-utils';
 import { expect, it, vi } from 'vitest';
-vi.mock('../services/bookFileCache', () => ({ clearBookFileCacheForUser: vi.fn() }));
+vi.mock('../features/reader/web/bookFileCache', () => ({ clearBookFileCacheForUser: vi.fn() }));
 vi.mock('../views/LibraryView.vue', () => ({ default: { template: '<div>书架</div>' } }));
 vi.mock('../views/SearchView.vue', () => ({ default: { template: '<div />' } }));
 vi.mock('../views/SettingsView.vue', () => ({ default: { template: '<div />' } }));
-vi.mock('../components/BookReader.vue', () => ({ default: { template: '<div />' } }));
+vi.mock('../features/reader/ui/BookReader.vue', () => ({ default: { template: '<div />' } }));
 it('preserves login inputs and registration request count during background verification', async () => {
   const values = new Map<string, string>();
   vi.stubGlobal('localStorage', { getItem: (key: string) => values.get(key) ?? null, setItem: (key: string, value: string) => values.set(key, value), removeItem: (key: string) => values.delete(key) });
@@ -42,7 +42,7 @@ it('preserves login inputs and registration request count during background veri
       if (failure === 'network') fail(new Error('offline')); else finish(response(503, null));
       await flushPromises(); preserved();
     }
-    const { SESSION_EVENT_KEY } = await import('../services/apiClient');
+    const { SESSION_EVENT_KEY } = await import('../shared/web/apiClient');
     const marker = JSON.stringify({ kind: 'changed', id: 'another-tab' });
     localStorage.setItem(SESSION_EVENT_KEY, marker);
     window.dispatchEvent(new StorageEvent('storage', { key: SESSION_EVENT_KEY, newValue: marker }));

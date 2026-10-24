@@ -21,6 +21,18 @@
 
 凭据按用户绑定并使用 `ENCRYPTION_KEY` 加密保存，服务端读取时解密后随请求使用，不存在部署级 Cookie 回退。用户 Cookie 仅在下载接口明确返回 401/403 时标记 `loginStatus='failed'`。未配置任何可用 Cookie 时下载失败，前端可引导用户重新登录或导入 Cookie。
 
+## 8.0 检测上游连通性
+
+`POST /api/v1/user/zlibrary-config/discover-domains`
+
+请求体为 `{ "baseUrl": "https://mirror.example" }`。后端由书源适配器从用户当前填写的 HTTPS origin 获取候选地址，并逐个匿名检测。返回候选地址、稳定分类、HTTP 状态和检测时间；只改变前端草稿，用户仍需显式选择并通过账号/Cookie 验证后才保存，不自动切换域名。
+
+`POST /api/v1/user/zlibrary-config/probe`
+
+请求体为 `{ "baseUrl": "https://mirror.example" }`。服务端经书源适配器发起一次匿名检测，不携带 Cookie、账号或密码，也不修改数据库。返回 `baseUrl`、`category`、`status` 和 `checkedAt`；分类包括 `API_REACHABLE`、`AUTH_REQUIRED`、`BOT_PROTECTION`、`UPSTREAM_FORBIDDEN`、`RATE_LIMITED`、`NETWORK_ERROR`、`TIMEOUT`、`INVALID_RESPONSE` 和 `UPSTREAM_HTTP_ERROR`。`API_REACHABLE` 只表示上游接口可达，不表示账号已验证。公开版未提供书源适配器，这两个接口不可用。
+
+SSRF 约束（本组全部接口及下载共用）：`baseUrl` 必须是不含路径、query、fragment 和 userinfo 的 HTTPS origin，指向本机、私网、链路本地、云元数据、IPv4-mapped/NAT64 等保留地址的 IP 字面量直接返回 400。域名解析结果与每一跳重定向在建立连接时再次校验；命中禁止网段时请求不会发出，探测返回 `NETWORK_ERROR`，诊断中的 `errorCode` 为 `ERR_OUTBOUND_ADDRESS_BLOCKED`。上游请求不读取 `HTTP(S)_PROXY` 环境变量。若运行环境的代理使用 fake-ip DNS（域名解析到 `198.18.0.0/15`），真实解析由代理完成，域名解析到内网的拦截失效，只剩 IP 字面量校验。
+
 ## 8.1 配置/更新 Zlibrary 凭据
 
 ```
@@ -159,7 +171,7 @@ GET /api/v1/user/zlibrary-config
 PATCH /api/v1/user/zlibrary-config/base-url
 ```
 
-请求体为 `{ "baseUrl": "https://..." }`。该接口不重新提交账号密码，用于切换当前用户的镜像地址；限制为每分钟 10 次。
+请求体为 `{ "baseUrl": "https://..." }`。后端先匿名检测，再使用当前已保存 Cookie 验证同一地址，成功后才更新地址；没有有效凭据时返回冲突。限制为每分钟 10 次。
 
 只更新地址也会创建当前用户的持久化配置，因此后续 GET 返回 `hasStoredConfig: true`。
 

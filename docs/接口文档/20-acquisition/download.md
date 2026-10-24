@@ -15,7 +15,7 @@
 
 前端创建下载任务只需传入 `bookId` + `sourcePlatform`，后端自动从 `source_refs` 表中查出 `hash` 和 `sourceBookId` 完成下载。
 
-实现上，Acquisition 不直接访问 `books/source_refs/book_artifacts/book_current_artifacts`：归属、来源引用和既有文件分别经 IntelligentLibrary 公共查询 Port 获取，只有下载成功的 artifact 才经 `AttachBookFilePort` 交付 Catalog。公共 Adapter 只转发到 `AttachBookFileUseCase/DetachBookFileUseCase`；Catalog 的 `SqliteBookArtifactRepository` 负责 artifact 账本和正常 pointer DML，删除协调器负责删书场景。来源下载或 artifact 交付失败时只更新本任务为 `failed`，不会建立 current pointer；若 artifact 已交付但任务完成状态写入失败，Catalog 会按 user/book/checksum/path 精确删除 pointer、退役 artifact 并撤销本次磁盘文件，再把任务记录为 `failed`。
+实现上，Acquisition 不直接访问 `books/source_refs/book_artifacts/book_current_artifacts`：归属、来源引用和既有文件分别经 IntelligentLibrary 公共查询 Port 获取，只有下载成功的 artifact 才经 `AttachBookFilePort` 交付 Catalog。交付时 Catalog 与导入一致按魔数检测格式，MIME 只取检测结果，忽略上游 Content-Type 与文件名；无法识别为 EPUB/PDF/MOBI/AZW3 时不入库，任务 `failed`，`errorMessage` 为 `下载的文件不是有效的 EPUB、PDF、MOBI 或 AZW3`。公共 Adapter 只转发到 `AttachBookFileUseCase/DetachBookFileUseCase`；Catalog 的 `SqliteBookArtifactRepository` 负责 artifact 账本和正常 pointer DML，删除协调器负责删书场景。来源下载或 artifact 交付失败时只更新本任务为 `failed`，不会建立 current pointer；若 artifact 已交付但任务完成状态写入失败，Catalog 会按 user/book/checksum/path 精确删除 pointer、退役 artifact 并撤销本次磁盘文件，再把任务记录为 `failed`。
 
 ## 7.1 创建下载任务
 

@@ -4,7 +4,8 @@ import { ReadingStateEventBus } from "../application/reading-state-event-bus";
 import { SqliteReadingStateChangeCoordinator } from "./sqlite-reading-state-change-coordinator";
 import { SqliteReadingStateVersionRepository } from "./sqlite-reading-state-version.repository";
 
-describe("SqliteReadingStateChangeCoordinator", () => {
+// 编号对应 doc/同步测试用例审查.md
+describe("笔记修改与版本号同事务提交（SqliteReadingStateChangeCoordinator）", () => {
   let database: DatabaseSync;
   let events: ReadingStateEventBus;
 
@@ -23,7 +24,7 @@ describe("SqliteReadingStateChangeCoordinator", () => {
     events = new ReadingStateEventBus();
   });
 
-  it("commits the state mutation and revision before publishing", () => {
+  it("C3 笔记修改与版本号 +1 在同一事务提交，提交成功后才通知", () => {
     const published = jest.fn();
     events.subscribe({ userId: 1, bookId: 7 }, published);
     const coordinator = new SqliteReadingStateChangeCoordinator(
@@ -47,7 +48,7 @@ describe("SqliteReadingStateChangeCoordinator", () => {
     expect(published).toHaveBeenCalledWith(expect.objectContaining({ revision: 1 }));
   });
 
-  it("rolls back the state mutation and does not publish when revision recording fails", () => {
+  it("C4 版本号写入失败 → 笔记修改一起回滚，不通知", () => {
     const published = jest.fn();
     events.subscribe({ userId: 1, bookId: 7 }, published);
     database.exec(`
@@ -75,7 +76,7 @@ describe("SqliteReadingStateChangeCoordinator", () => {
     expect(published).not.toHaveBeenCalled();
   });
 
-  it("does not bump or publish for an idempotent no-op", () => {
+  it("C5 操作实际没有改变任何东西 → 版本号不变，不通知", () => {
     const published = jest.fn();
     events.subscribe({ userId: 1, bookId: 7 }, published);
     const coordinator = new SqliteReadingStateChangeCoordinator(

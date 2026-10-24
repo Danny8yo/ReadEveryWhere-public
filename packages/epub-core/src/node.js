@@ -79,7 +79,9 @@ function submit(
 export function buildEpubIndex(bytes, options) {
   if (typeof options?.onBatch !== "function")
     throw new TypeError("Index build requires an onBatch consumer");
-  return submit(bytes, { action: "index" }, options);
+  const { streams = "char", ...workerOptions } = options;
+  if (streams !== "char" && streams !== "dual") throw new TypeError("Index streams must be char or dual");
+  return submit(bytes, { action: "index", streams }, workerOptions);
 }
 export function replayEpubRanges(bytes, scope, ranges, options) {
   return submit(bytes, { action: "replay", scope, ranges }, options);
@@ -90,6 +92,15 @@ export function readEpubContext(bytes, scope, range, maxChars, options) {
     { action: "context", scope, ranges: [range], maxChars },
     options,
   );
+}
+/** Bounded canonical ranges with source mapping/CFI and explicit unmappable edge gaps; no expansion. */
+export function readEpubRanges(bytes, scope, ranges, options) {
+  if (!Array.isArray(ranges) || !ranges.length || ranges.length > 100 ||
+      ranges.some(r => !Number.isSafeInteger(r.sectionIndex) || r.sectionIndex < 0 || typeof r.href !== "string" ||
+        !Number.isSafeInteger(r.start) || !Number.isSafeInteger(r.end) || r.start < 0 || r.end <= r.start) ||
+      ranges.reduce((n, r) => n + r.end - r.start, 0) > 50000)
+    throw new TypeError("Exact reading accepts 1-100 ranges and at most 50000 characters");
+  return submit(bytes, { action: "ranges", scope, ranges }, options);
 }
 export function expandEpubEvidence(bytes, scope, ranges, options) {
   const { maxChars, maxWindowChars, limit, preserveAllHits = false, ...workerOptions } = options;

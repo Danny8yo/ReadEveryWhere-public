@@ -4,10 +4,10 @@ import { expect, it, vi } from 'vitest';
 const mocks = vi.hoisted(() => ({ getSession: vi.fn(), clearCache: vi.fn(), mountedUsers: [] as number[] }));
 vi.mock('../features/auth/api/authApi', () => ({ getSession: mocks.getSession, loginRemote: vi.fn(), registerRemote: vi.fn(), resetPasswordApi: vi.fn(), logoutApi: vi.fn() }));
 vi.mock('../features/library/api/librarySyncApi', () => ({openLibraryStream:()=>()=>{}, getLibrarySyncState:vi.fn()}));
-vi.mock('../services/bookFileCache', () => ({ clearBookFileCacheForUser: mocks.clearCache }));
+vi.mock('../features/reader/web/bookFileCache', () => ({ clearBookFileCacheForUser: mocks.clearCache }));
 vi.mock('../views/LibraryView.vue', async () => {
   const { defineComponent, h } = await import('vue');
-  const { useAuth } = await import('../composables/useAuth');
+  const { useAuth } = await import('../features/auth/web/useAuth');
   return { default: defineComponent({ setup() {
     const id = useAuth().user.value!.userId;
     mocks.mountedUsers.push(id);
@@ -17,7 +17,7 @@ vi.mock('../views/LibraryView.vue', async () => {
 vi.mock('../views/SearchView.vue', () => ({ default: { template: '<div />' } }));
 vi.mock('../views/SettingsView.vue', () => ({ default: { template: '<div />' } }));
 vi.mock('../views/LoginView.vue', () => ({ default: { template: '<div />' } }));
-vi.mock('../components/BookReader.vue', () => ({ default: { template: '<div />' } }));
+vi.mock('../features/reader/ui/BookReader.vue', () => ({ default: { template: '<div />' } }));
 it('remounts user-owned pages when focus discovers another account or backend without a storage event', async () => {
   const values = new Map<string,string>([['readEveryWhere.backendBaseUrl', 'http://localhost:3000']]);
   vi.stubGlobal('localStorage', { getItem: (key: string) => values.get(key) ?? null, setItem: (key: string, value: string) => values.set(key,value), removeItem: (key: string) => values.delete(key) });
@@ -26,7 +26,7 @@ it('remounts user-owned pages when focus discovers another account or backend wi
   const wrapper = mount(App);
   await flushPromises();
   expect(wrapper.get('[data-testid="library-owner"]').text()).toBe('1');
-  const api = await import('../services/apiClient');
+  const api = await import('../shared/web/apiClient');
   let finishOldRequest!: (response: Response) => void;
   vi.stubGlobal('fetch', vi.fn(() => new Promise<Response>(resolve => { finishOldRequest = resolve; })));
   const oldRequest = api.fetchWithAuth('/api/v1/library/books');

@@ -34,6 +34,10 @@ export class SelectionQaController {
     if (!req.user) throw AppException.unauthorized();
     return req.user.userId;
   }
+  private protocol(req: Request): void {
+    if (req.headers["x-selection-qa-protocol"] !== "2")
+      throw new AppException(409, 40917, "请刷新页面以使用新版问答。", { reason: "QA_PROTOCOL_UPGRADE_REQUIRED" });
+  }
   private async execute<T>(fn: () => T | Promise<T>): Promise<T> {
     try {
       return await fn();
@@ -73,6 +77,7 @@ export class SelectionQaController {
     @Req() req: Request,
     @Body() input: CreateConversationDto,
   ) {
+    this.protocol(req);
     if (input.question.length > 4000) throw AppException.validation("question");
     return this.execute(() => this.service.create(this.user(req), input));
   }
@@ -106,6 +111,7 @@ export class SelectionQaController {
     @Param("id") id: string,
     @Body() input: CreateTurnDto,
   ) {
+    this.protocol(req);
     if (input.question.length > 4000) throw AppException.validation("question");
     return this.execute(() => this.service.addTurn(this.user(req), id, input));
   }
@@ -175,6 +181,7 @@ export class SelectionQaController {
     @Query() query: EventQueryDto,
     @Res() res: Response,
   ) {
+    this.protocol(req);
     const user = this.user(req);
     let sequence = query.afterSequence;
     await this.execute(() => this.service.events(user, id, sequence));

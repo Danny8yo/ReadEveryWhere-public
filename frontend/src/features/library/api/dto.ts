@@ -1,5 +1,5 @@
 import type { BookAnalysisSummary, FormalBookReadingProfile } from '../../metadata/model/bookAnalysis';
-import type { EbookFormat } from '../../../utils/bookFormat';
+import type { EbookFormat } from '../../../shared/utils/bookFormat';
 export interface LibraryBookDto {
     id: number;
     userId: number;

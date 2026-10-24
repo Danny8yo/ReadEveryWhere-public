@@ -1,8 +1,4 @@
 export {
-  BOOK_READING_PROFILE_ACCESS_PORT,
-  type BookReadingProfileAccessPort,
-} from "./book-reading-profile-access.port";
-export {
   BOOK_OWNERSHIP_PORT,
   type BookOwnershipPort,
   type BookOwnershipQuery,

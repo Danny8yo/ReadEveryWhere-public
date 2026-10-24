@@ -20,6 +20,10 @@ import { SqliteReadingStateChangeCoordinator } from "../../infrastructure/sqlite
 import { SqliteReadingStateVersionRepository } from "../../infrastructure/sqlite-reading-state-version.repository";
 import type { AnnotationSelectionCommand } from "../../public/annotation-selection-command.port";
 
+// 本文件经 epub-core 启动真实 Worker 线程解析 EPUB（每次调用新建线程并重新解压），
+// 本地并行全量时单个用例接近 5s，2 核 CI runner 上会超过 Jest 默认 5s 超时。
+jest.setTimeout(30_000);
+
 const quote = " 重复句子。 ";
 const cfi = "epubcfi(/6/2!/4/6[second],/1:0,/1:7)";
 function epub(): Buffer {

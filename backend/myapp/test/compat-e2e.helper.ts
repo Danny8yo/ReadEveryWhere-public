@@ -24,7 +24,6 @@ export async function createCompatApp(
   process.env.JWT_SECRET = "compat-e2e-jwt-secret";
   process.env.ENCRYPTION_KEY = "c".repeat(64);
   process.env.BOOK_FILE_ACCESS_TOKEN_SECRET = "compat-e2e-file-secret";
-  process.env.AI_READING_CONVERSATIONS_ENABLED = "false";
 
   const AppModule = loadCompatExport<any>(["src/app.module"], "AppModule");
   const AllExceptionsFilter = loadCompatExport<any>([

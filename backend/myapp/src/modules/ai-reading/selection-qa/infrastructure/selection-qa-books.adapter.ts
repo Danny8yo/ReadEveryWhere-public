@@ -37,6 +37,23 @@ export class SelectionQaBooksAdapter implements QaBookPort {
   ) {
     return this.books.searchCandidates(userId, { ...this.scope(s), ...input, deadline: Math.min(input.deadline, Date.now() + 60_000) });
   }
+  async searchPool(
+    userId: number,
+    s: SelectionSnapshot,
+    input: Parameters<QaBookPort["searchPool"]>[2],
+  ) {
+    const result = await this.books.searchPool(userId, { ...this.scope(s), ...input, deadline: Math.min(input.deadline, Date.now() + 60_000) });
+    if (result.state !== "ready") return result;
+    return { state: "ready" as const, candidates: result.candidates, unavailable: result.unavailable, lists: result.lists,
+      pipeline: { tokenizerVersion: result.version.tokenizerVersion, queryPolicyVersion: result.version.queryPolicyVersion } };
+  }
+  verifyCandidates(
+    userId: number,
+    s: SelectionSnapshot,
+    input: Parameters<QaBookPort["verifyCandidates"]>[2],
+  ) {
+    return this.books.verifyCandidates(userId, { ...this.scope(s), ...input, deadline: Math.min(input.deadline, Date.now() + 60_000) });
+  }
   expandSelected(
     userId: number,
     s: SelectionSnapshot,

@@ -88,10 +88,9 @@ export class SelectionQaModelAdapter implements QaModelPort {
     const result = await this.models.complete(
       {
         ...this.request(userId, snapshot, input),
-        // A provider can return HTTP 200 with an empty JSON body. The DeepSeek
-        // adapter retries invalid responses once before a planning decision is
-        // published; the turn deadline still bounds both attempts.
-        maxAttempts: 2,
+        // One reserved model call is one provider attempt. Recovery must return
+        // to the host so any subsequent call is charged to the persisted budget.
+        maxAttempts: 1,
         toolChoice: profile.capabilities.reasoning ? "auto" : "required",
       },
     );

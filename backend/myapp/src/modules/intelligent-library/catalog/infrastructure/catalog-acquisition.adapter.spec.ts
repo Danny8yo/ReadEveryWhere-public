@@ -13,6 +13,7 @@ import { DetachBookFileUseCase } from "../application/use-cases/detach-book-file
 import type { AttachedBookFileProjection } from "../../public/book-file-acquisition.port";
 import type { PdfPageTreeOptimizerPort } from "../application/ports/pdf-page-tree-optimizer.port";
 import { readFileSync } from "node:fs";
+import AdmZip from "adm-zip";
 
 // AttachBookFileUseCase 现在会在 PDF 落库前调用页树重建。这些用例不关心重建本身，
 // 桩件只把磁盘上文件的真实大小报回去，保持落库事实自洽。
@@ -24,6 +25,11 @@ const stubPdfPageTrees: PdfPageTreeOptimizerPort = {
   }),
 };
 
+function minimalEpub(): Buffer {
+  const zip = new AdmZip();
+  zip.addFile("mimetype", Buffer.from("application/epub+zip"));
+  return zip.toBuffer();
+}
 
 describe("CatalogAcquisitionAdapter file compensation", () => {
   let root: string;
@@ -84,10 +90,43 @@ describe("CatalogAcquisitionAdapter file compensation", () => {
     expect(existsSync(delivered.localPath)).toBe(true);
   });
 
+  it("rejects downloaded bytes that are not an ebook", async () => {
+    await expect(adapter.attach({
+      userId: 7,
+      bookId: 42,
+      sourcePlatform: "zlibrary",
+      sourceUrl: "/download/42",
+      content: Buffer.from("<html><script>alert(1)</script></html>"),
+      fileName: "book.epub",
+      mimeType: "text/html",
+      fileSize: 38,
+      checksum: "checksum-html",
+    })).rejects.toThrow("下载的文件不是有效的 EPUB、PDF、MOBI 或 AZW3");
+    expect(bookFileCount()).toBe(0);
+  });
+
+  it("stores the detected MIME instead of the upstream Content-Type", async () => {
+    const content = minimalEpub();
+    const delivered = await adapter.attach({
+      userId: 7,
+      bookId: 42,
+      sourcePlatform: "zlibrary",
+      sourceUrl: "/download/42",
+      content,
+      fileName: "book.epub",
+      mimeType: "text/html",
+      fileSize: content.byteLength,
+      checksum: "checksum-mislabelled",
+    });
+    expect(sqlite.getDatabase().prepare(
+      "SELECT mime_type FROM book_artifacts WHERE artifact_id = ?",
+    ).get(delivered.artifactId)).toEqual({ mime_type: "application/epub+zip" });
+  });
+
   function seedAttachedFile(fileName: string, checksum: string): Promise<AttachedBookFileProjection> {
     const artifact = join(root, "downloads", "7", fileName);
     mkdirSync(join(root, "downloads", "7"), { recursive: true });
-    writeFileSync(artifact, "fixture");
+    writeFileSync(artifact, minimalEpub());
     return adapter.attach({
       userId: 7,
       bookId: 42,

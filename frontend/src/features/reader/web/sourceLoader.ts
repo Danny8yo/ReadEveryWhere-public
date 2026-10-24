@@ -2,21 +2,21 @@ import {
   EPUB_EXTRACTOR_VERSION,
   NORMALIZATION_VERSION,
 } from "@readeverywhere/epub-core";
-import { fetchWithAuth, resolveBackendUrl } from "../../../services/apiClient";
+import { fetchWithAuth, resolveBackendUrl } from "../../../shared/web/apiClient";
 import { createBookFileAccessUrl } from "../../library/api/libraryApi";
 import {
   buildBookFileCacheKey,
   getCachedBookFile,
   putCachedBookFile,
   type BookFileCacheDescriptor,
-} from "../../../services/bookFileCache";
+} from "./bookFileCache";
 import {
   getBookFormat,
   getBookFormatMimeType,
-} from "../../../utils/bookFormat";
-import { shouldDownloadPdfWhole } from "../../../lib/reader/pdfLoadStrategy";
-import { resolvePdfLoadingMode } from "../../../lib/reader/pdfLoadingMode";
-import { shareBookFileTransfer } from "../../../services/bookFileTransfers";
+} from "../../../shared/utils/bookFormat";
+import { shouldDownloadPdfWhole } from "../domain/pdfLoadStrategy";
+import { resolvePdfLoadingMode } from "../domain/pdfLoadingMode";
+import { shareBookFileTransfer } from "./bookFileTransfers";
 import type { ReaderSource } from "./WebReaderPort";
 export interface ReaderSourceInput {
   bookId: number;

@@ -1,5 +1,8 @@
+import { createQaReadingTools } from "./tools/qa-reading-tools";
+import { createQaDeliveryTools } from "./tools/qa-delivery-tools";
+import { QaToolRegistry } from "./tools/qa-tool-registry";
 import { QA_POLICY } from "./selection-qa-runtime.port";
-import { finishPlan } from "./selection-qa-decision.fixture";
+import { finishPlan, passingQualityFixture } from "./selection-qa-decision.fixture";
 import { DeepSeekLanguageModelAdapter } from "../../../../integrations/deepseek/deepseek-language-model.adapter";
 import { LanguageModelGateway } from "../../../../support/ai-model/application/language-model.gateway";
 import { ProviderRegistry } from "../../../../support/ai-model/application/provider-registry";
@@ -86,6 +89,8 @@ const usage = { promptTokens: 10, completionTokens: 10, totalTokens: 20, cacheRe
 const idFrom = (input: QaModelInput) =>
   JSON.parse(input.messages[input.messages.length - 1].content!)
     .VERIFIED_EVIDENCE[0].evidenceId as string;
+const contextCall = { id: "selection-context", name: "read_selection_context", arguments: "{}" };
+const withContext = (input: QaModelInput) => JSON.parse(input.messages[input.messages.length - 1].content!).VERIFIED_EVIDENCE.length === 0;
 describe("selection QA bounded execution", () => {
   let db: DatabaseSync,
     records: SqliteSelectionQaRepository,
@@ -113,9 +118,10 @@ describe("selection QA bounded execution", () => {
     model = {
       snapshot: () => snapshot,
       count: (_s, text) => Math.ceil(text.length / 4),
-      complete: jest.fn(async (_u, _s, input) => ({ toolCalls: finishPlan(input), usage })),
+      complete: jest.fn(async (_u, _s, input) => ({ toolCalls: withContext(input) ? [contextCall] : finishPlan(input), usage })),
       stream: jest.fn(async (_u, _s, input, onDelta) => {
-        await onDelta(`Answer [[evidence:${idFrom(input)}]]`);
+        const selected = JSON.parse(input.messages[input.messages.length - 1].content!).VERIFIED_EVIDENCE;
+        await onDelta(selected.length ? `Answer [[evidence:${idFrom(input)}]]` : "基于模型通用知识：Answer");
         return { usage, finishReason: "stop" };
       }),
     };
@@ -131,6 +137,7 @@ describe("selection QA bounded execution", () => {
 
       return { candidates: input.evidence, contextWindows: input.evidence.map(e => ({ sectionIndex: e.sectionIndex, start: e.start, end: e.end, hitRanges: [{ sectionIndex: e.sectionIndex, start: e.start, end: e.end }] })), contextTruncated: false };
     }),
+    searchPool: jest.fn(async () => { throw new Error("unused"); }), verifyCandidates: jest.fn(async () => { throw new Error("unused"); }),
     replay: jest.fn(async (_u, _s, items) => items),
     };
     service = new SelectionQaService(
@@ -144,7 +151,7 @@ describe("selection QA bounded execution", () => {
       },
       model,
     );
-    executor = new SelectionQaExecutor(store, model, books, { get: (_userId, bookId) => ({ bookId, title: "大型网站技术架构" }) });
+    executor = new SelectionQaExecutor(store, passingQualityFixture(model), books, { get: (_userId, bookId) => ({ bookId, title: "大型网站技术架构" }) }, env => new QaToolRegistry([...createQaReadingTools(env), ...createQaDeliveryTools(env.ledger, env.currentBook)]));
   });
   afterEach(() => db.close());
   async function claim() {
@@ -160,7 +167,7 @@ describe("selection QA bounded execution", () => {
     await executor.run(c, new AbortController().signal);
     return records.turn(1, c.turn.id);
   }
-  it("accepts a broad decision and projects excess cross-need candidates instead of failing the turn", async () => {
+  it("accepts selected verified candidates without imposing an automatic expansion-stage budget", async () => {
     const candidates = Array.from({ length: 16 }, (_, index) => {
       const quote = `候选片段${index}`;
       return evidence({ ...selection, start: 100 + index * 20, end: 100 + index * 20 + quote.length, canonicalQuote: quote, displayedQuote: quote });
@@ -171,7 +178,7 @@ describe("selection QA bounded execution", () => {
       planningStep++;
       if (planningStep === 1) return { usage, toolCalls: [{ id: "search", name: "search_book", arguments: JSON.stringify({ informationNeed: "比较检索方案", queries: { query1: "检索", query2: "", query3: "", query4: "" } }) }] };
       const envelope = JSON.parse(input.messages[input.messages.length - 1].content!);
-      const candidateIds = envelope.researchBudget.candidateIds as string[];
+      const candidateIds = envelope.VERIFIED_EVIDENCE.map((item: { evidenceId: string }) => item.evidenceId) as string[];
       return { usage, toolCalls: [{ id: `finish-${planningStep}`, name: "finish_research", arguments: JSON.stringify({
         informationNeeds: candidateIds.map((id: string, index: number) => ({ text: `比较检索方案的证据${index + 1}`, targetSource: "current_book", sourceName: "", evidenceIds: [id] })),
         externalEvidenceNeeded: [], insufficientEvidence: [], conclusion: "已有足够片段",
@@ -181,8 +188,8 @@ describe("selection QA bounded execution", () => {
     expect(turn?.status).toBe("completed");
     expect(planningStep).toBe(2);
     const review = turn?.process?.find(step => step.detail.operation === "finish_research" && step.detail.state === "completed")!.detail;
-    expect(review?.selectedEvidenceIds).toHaveLength(12);
-    expect(review?.budgetOmittedEvidenceIds).toHaveLength(4);
+    expect(review?.selectedEvidenceIds).toHaveLength(16);
+    expect(books.expandSelected).not.toHaveBeenCalled();
     expect(turn?.process?.some(step => step.detail.operation === "finish_research" && step.detail.state === "failed")).toBe(false);
   });
   it("returns validation feedback for malformed finish_research fields before the final planning call", async () => {
@@ -198,7 +205,7 @@ describe("selection QA bounded execution", () => {
     expect(turn?.status).toBe("completed");
     expect(planningStep).toBe(2);
   });
-  it("returns validation feedback when a decision invents an evidence ID", async () => {
+  it("fails explicitly when a decision invents an evidence ID", async () => {
     let planningStep = 0;
     model.complete = jest.fn(async (_userId, _snapshot, input) => {
       planningStep++;
@@ -207,16 +214,13 @@ describe("selection QA bounded execution", () => {
         const raw = JSON.parse(call.arguments);
         raw.informationNeeds = [{ text: "解释本书", targetSource: "current_book", sourceName: "", evidenceIds: ["e_invented"] }];
         call.arguments = JSON.stringify(raw);
-      } else {
-        const feedback = JSON.parse([...input.messages].reverse().find(message => message.role === "tool")!.content!);
-        expect(feedback.error).toBe("EVIDENCE_INVALID");
-        expect(feedback.validation).toMatchObject({ field: "informationNeeds.evidenceIds", unknownCount: 1 });
       }
       return { usage, toolCalls: [call] };
     });
     const turn = await run(await claim());
-    expect(turn?.status).toBe("completed");
-    expect(planningStep).toBe(2);
+    expect(turn).toMatchObject({ status: "failed", errorCode: "EVIDENCE_INVALID" });
+    expect(planningStep).toBe(1);
+    expect(model.stream).not.toHaveBeenCalled();
   });
   it("executes two book calls from one planning response within the turn search budget", async () => {
     let planningStep = 0;
@@ -277,7 +281,8 @@ describe("selection QA bounded execution", () => {
       return { usage, toolCalls: [call] };
     });
     model.stream = jest.fn(async (_u, _s, input, delta) => {
-      expect(JSON.stringify(input.messages)).not.toContain("首轮内部知识句子");
+      expect(JSON.stringify(input.messages)).toContain("首轮内部知识句子");
+      expect(JSON.stringify(input.messages)).toContain("prior_model_output_not_source_evidence");
       const envelope = JSON.parse(input.messages[input.messages.length - 1].content!);
       expect(envelope.RESEARCH_DECISION.informationNeeds).toEqual(expect.arrayContaining([
         expect.objectContaining({ targetSource: "other_book_unverified", sourceName: "高性能MySQL", evidenceIds: [] }),
@@ -314,8 +319,8 @@ describe("selection QA bounded execution", () => {
     const input = (model.stream as jest.Mock).mock.calls[0][2];
     const final = JSON.parse(input.messages.at(-1).content);
     expect(final.SEARCH_OUTCOME).toEqual({ succeeded: recovered ? 1 : 0, failed: recovered ? 1 : 2 });
-    expect(final.researchStatusInstruction).toContain(recovered ? "Some book searches failed and others completed" : "none completed successfully");
-    expect(final.instruction).toContain("never proves the book lacks the answer");
+    expect(final.researchStatusInstruction).toContain(recovered ? "Some book search operations failed and others completed" : "none completed successfully");
+    expect(input.messages[0].content).toContain("Empty or failed searches do not prove whole-book absence");
     expect(turn.process!.find(p => p.detail.operation === "stream" && p.detail.state === "started")!.detail.researchLimited).toBe(true);
   });
   it("does not describe an intentional no-search decision as a failed search", async () => {
@@ -326,7 +331,7 @@ describe("selection QA bounded execution", () => {
     expect(final.SEARCH_OUTCOME).toEqual({ succeeded: 0, failed: 0 });
     expect(final.researchStatusInstruction).toContain("No new book search was executed");
     expect(final.researchStatusInstruction).not.toContain("Disclose the partial failure");
-    expect(final.instruction).not.toContain("If failed > 0");
+    expect(final.researchStatusInstruction).not.toContain("If failed > 0");
   });
   it("notifies only committed events, suppresses rollback, isolates users and unsubscribes", async () => {
     const c = await claim();
@@ -360,7 +365,7 @@ describe("selection QA bounded execution", () => {
     const plan = (model.complete as jest.Mock).mock.calls[0][2] as QaModelInput;
     const answer = (model.stream as jest.Mock).mock.calls[0][2] as QaModelInput;
     expect(plan.turnId).toBe(c.turn.id);
-    expect(plan.messages[0].content).toContain("call finish_research alone");
+    expect(plan.messages[0].content).toContain("This response chooses actions; it is not the public answer");
     expect(answer.messages.some(m => m.content?.includes("This request is ONLY"))).toBe(false);
     expect(answer.turnId).toBe(c.turn.id);
     const restored = records.turn(1, c.turn.id);
@@ -372,14 +377,15 @@ describe("selection QA bounded execution", () => {
   it.each(["read_book", "book_read"])("does not expose or execute removed reading tool %s", async (name) => {
     model.complete = jest.fn(async (_u, _s, input) => {
       if (!input.tools) throw new Error("Planning tools missing");
-      expect(input.tools.map((t: any) => t.function.name).sort()).toEqual(["finish_research", "search_book"]);
+      expect(input.tools.map((t: any) => t.function.name)).toEqual(expect.arrayContaining(["finish_research", "search_book", "read_selection_context", "expand_evidence", "request_clarification"]));
+      expect(input.tools.some(t => t.function.name === name)).toBe(false);
       return { usage, toolCalls: [{ id: "removed-read", name, arguments: "{}" }] };
     });
     const c = await claim();
     const result = await run(c);
     expect(result.status).toBe("failed");
     expect(result.errorCode).toBe("TOOL_NOT_ALLOWED");
-    expect(books.context).toHaveBeenCalledTimes(1);
+    expect(books.context).not.toHaveBeenCalled();
     expect(books.searchCandidates).not.toHaveBeenCalled();
     expect(model.stream).not.toHaveBeenCalled();
   });
@@ -387,6 +393,8 @@ describe("selection QA bounded execution", () => {
     const fetchFn = jest.fn(async (_url: string, init?: RequestInit) => {
       const body = JSON.parse(String(init!.body));
       const usage = { prompt_tokens: 10, completion_tokens: 5, total_tokens: 15, prompt_cache_hit_tokens: 2, prompt_cache_miss_tokens: 8 };
+      if (!body.stream && body.tools.some((t: any) => t.function.name === "assess_answer"))
+        return new Response(JSON.stringify({ choices: [{ message: { role: "assistant", content: null, tool_calls: [{ id: "check", type: "function", function: { name: "assess_answer", arguments: '{"verdict":"pass","issues":[]}' } }] }, finish_reason: "tool_calls" }], usage }));
       if (!body.stream) {
         expect(body.tool_choice).toBe(reasoning ? "auto" : "required");
         const searchSchema = body.tools.find((t: any) => t.function.name === "search_book")?.function.parameters;
@@ -417,17 +425,17 @@ describe("selection QA bounded execution", () => {
     const adapter = new SelectionQaModelAdapter(gateway, { getPublic: () => ({ provider: "deepseek", displayName: "test", modelId: "deepseek-chat", hasApiKey: true, updatedAt: null }), getCredential: () => ({ provider: "deepseek", modelId: "deepseek-chat", apiKey: "isolated-test-only" }) } as any, profiles, tokenizers);
     books.searchCandidates = jest.fn(async () => ({ state: "ready" as const, candidates: [evidence()], budgetLimited: false, contextTruncated: false, unavailable: [{ sectionIndex: 0, href: "chapter.xhtml", start: 4, end: 5, reason: "SYNTHETIC_EDGE" }] }));
     const c = await claim(); c.snapshot = adapter.snapshot(1);
-    await new SelectionQaExecutor(store, adapter, books, { get: (_userId, bookId) => ({ bookId, title: "大型网站技术架构" }) }).run(c, new AbortController().signal);
+    await new SelectionQaExecutor(store, adapter, books, { get: (_userId, bookId) => ({ bookId, title: "大型网站技术架构" }) }, env => new QaToolRegistry([...createQaReadingTools(env), ...createQaDeliveryTools(env.ledger, env.currentBook)])).run(c, new AbortController().signal);
     expect(records.turn(1, c.turn.id)).toMatchObject({ status: "completed", answer: expect.stringContaining("真实适配器协议测试 [[evidence:") });
-    expect(fetchFn).toHaveBeenCalledTimes(3);
+    expect(fetchFn).toHaveBeenCalledTimes(4);
   });
   it("discloses complete context and retrieved text and restores old previews from the same turn ledger", async () => {
-    const text = '完整原文'.repeat(350) + '片段末尾';
+    const text = 'text' + '完整原文'.repeat(350) + '片段末尾';
     const full = evidence({ ...selection, canonicalQuote: text, displayedQuote: text, end: text.length });
     books.context = jest.fn(async () => full);
     books.searchCandidates = jest.fn(async () => ({ state: 'ready' as const, candidates: [full], budgetLimited: false, contextTruncated: false, unavailable: [] }));
     let plans = 0;
-    model.complete = jest.fn(async (_u, _s, input) => ({ usage, toolCalls: plans++ === 0 ? [{ id: 'search', name: 'search_book', arguments: JSON.stringify({ informationNeed: "解释本书概念", queries: { query1: '原文', query2: "", query3: "", query4: "" } }) }] : finishPlan(input) }));
+    model.complete = jest.fn(async (_u, _s, input) => ({ usage, toolCalls: plans++ === 0 ? [contextCall, { id: 'search', name: 'search_book', arguments: JSON.stringify({ informationNeed: "解释本书概念", queries: { query1: '原文', query2: "", query3: "", query4: "" } }) }] : finishPlan(input) }));
     const c = await claim();
     const turn = await run(c);
     expect(turn.status).toBe('completed');
@@ -453,7 +461,7 @@ describe("selection QA bounded execution", () => {
     expect(
       records.events(1, c.turn.id, 0).filter((e) => e.kind === "citation"),
     ).toHaveLength(1);
-    expect(store.remaining(c)).toEqual({ models: 4, tools: 5, chars: 23996 });
+    expect(store.remaining(c)).toEqual({ models: QA_POLICY.maxModelCalls - 4, tools: QA_POLICY.maxToolCalls - 1, chars: QA_POLICY.maxReadChars - 4 });
   });
   it("rejects actual serialized input above token cap before any provider call", async () => {
     model.count = jest.fn(() => snapshot.contextWindowTokens);
@@ -473,19 +481,21 @@ describe("selection QA bounded execution", () => {
     for (let index = 1; index <= 4; index++) {
       const current = index === 1 ? first : store.claim("owner", Date.now())!;
       store.append(current, `第${index}轮完整回答：` + "内容".repeat(4000), []);
-      store.finish(current, "completed", null);
+      store.finish(current, "failed", "historical_fixture");
+      db.prepare("UPDATE selection_qa_turns SET status='completed',error_code=NULL WHERE id=?").run(current.turn.id);
       service.addTurn(1, conversationId, { commandId: `history-${index}`, question: `第${index + 1}轮问题` });
     }
     model.snapshot = () => ({ ...snapshot, contextWindowTokens: window });
     // The queued fifth turn keeps its original snapshot; change only that persisted snapshot for this isolated fixture.
     db.prepare("UPDATE selection_qa_turns SET model_snapshot_json=? WHERE conversation_id=? AND turn_number=5").run(JSON.stringify(model.snapshot(1)), conversationId);
     model.stream = jest.fn(async (_u, _s, _input, delta) => { await delta("基于模型通用知识：回答。"); return { usage, finishReason: "stop" }; });
+    model.complete = jest.fn(async (_u, _s, input) => ({ usage, toolCalls: finishPlan(input) }));
     const current = store.claim("owner", Date.now())!;
     expect((await run(current)).status).toBe("completed");
     const planning = (model.complete as jest.Mock).mock.calls[0][2] as QaModelInput;
     const history = JSON.parse(planning.messages.find(message => message.content?.startsWith('{"contextType":"conversation_history",'))!.content!);
     const event = records.turn(1, current.turn.id).process!.find(step => step.detail.operation === "context_usage" && step.detail.callKind === "planning")!;
-    expect(event.detail.estimatedInputTokens).toBeLessThanOrEqual(window - 4096 - 1024);
+    expect(event.detail.estimatedInputTokens).toBeLessThanOrEqual(window - 3072 - 1024);
     expect(records.turn(1, current.turn.id).process).toEqual(expect.arrayContaining([
       expect.objectContaining({ detail: expect.objectContaining({ operation: "model", state: "completed", promptTokens: usage.promptTokens }) }),
       expect.objectContaining({ detail: expect.objectContaining({ operation: "stream", state: "completed", promptTokens: usage.promptTokens }) }),
@@ -501,7 +511,8 @@ describe("selection QA bounded execution", () => {
     }
     const final = (model.stream as jest.Mock).mock.calls[0][2] as QaModelInput;
     const finalHistory = JSON.parse(final.messages.find(message => message.content?.startsWith('{"contextType":"conversation_history",'))!.content!);
-    expect(JSON.stringify(finalHistory)).not.toContain("第4轮完整回答");
+    expect(JSON.stringify(finalHistory)).toContain("第4轮完整回答");
+    expect(finalHistory.recentTurns.at(-1).answerProvenance).toBe("prior_model_output_not_source_evidence");
   });
   it("reserves final stream after two searches and a final evidence review", async () => {
     let rounds = 0;
@@ -513,8 +524,8 @@ describe("selection QA bounded execution", () => {
     expect(model.complete).toHaveBeenCalledTimes(3);
     expect(model.stream).toHaveBeenCalledTimes(1);
     expect(books.searchCandidates).toHaveBeenCalledTimes(2);
-    expect((model.complete as jest.Mock).mock.calls[2][2].tools.map((t: any) => t.function.name)).toEqual(["finish_research"]);
-    expect(store.remaining(c).models).toBe(2);
+    expect((model.complete as jest.Mock).mock.calls[2][2].tools.map((t: any) => t.function.name)).toEqual(expect.arrayContaining(["finish_research", "search_book", "expand_evidence"]));
+    expect(store.remaining(c).models).toBe(QA_POLICY.maxModelCalls - 5);
   });
   it("keeps the final stream reserved after two searches and two finish_research repairs", async () => {
     let round = 0;
@@ -528,7 +539,7 @@ describe("selection QA bounded execution", () => {
         usage,
         toolCalls: [{ id: `invalid-finish-${round}`, name: "finish_research", arguments: JSON.stringify({ informationNeeds: [], selectedEvidenceIds: [] }) }],
       };
-      expect(input.tools?.map((tool: any) => tool.function.name)).toEqual(["finish_research"]);
+      expect(input.tools?.map((tool: any) => tool.function.name)).toEqual(expect.arrayContaining(["finish_research", "search_book"]));
       return { usage, toolCalls: finishPlan(input) };
     });
     const c = await claim();
@@ -536,18 +547,18 @@ describe("selection QA bounded execution", () => {
     expect(turn.status).toBe("completed");
     expect(model.complete).toHaveBeenCalledTimes(5);
     expect(model.stream).toHaveBeenCalledTimes(1);
-    expect(store.remaining(c).models).toBe(0);
+    expect(store.remaining(c).models).toBe(QA_POLICY.maxModelCalls - 7);
     expect(turn.process!.filter(step => step.detail.operation === "finish_research" && step.detail.state === "failed")).toHaveLength(2);
-    expect(turn.process!.filter(step => step.detail.operation === "model" && step.detail.callKind === "protocol_repair")).toHaveLength(2);
+    expect(turn.process!.filter(step => step.detail.operation === "model" && step.detail.state === "completed")).toHaveLength(5);
   });
   it("discloses incomplete initial context boundaries to planning and final answering", async () => {
     books.context = jest.fn(async () => ({...evidence(),contextTruncated:true}));
     const c = await claim();
     expect((await run(c)).status).toBe("completed");
-    const planning = (model.complete as jest.Mock).mock.calls[0][2] as QaModelInput;
+    const planning = (model.complete as jest.Mock).mock.calls[1][2] as QaModelInput;
     const answering = (model.stream as jest.Mock).mock.calls[0][2] as QaModelInput;
     for (const input of [planning, answering])
-      expect(input.messages.some(m => m.content?.includes('"initialContextTruncated":true'))).toBe(true);
+      expect(input.messages.some(m => m.content?.includes('"contextTruncated":true'))).toBe(true);
   });
   it("keeps valid 12000-character original selections complete", async () => {
     const long = {
@@ -572,7 +583,7 @@ describe("selection QA bounded execution", () => {
       long,
       expect.objectContaining({ maxChars: 12000 }),
     );
-    expect(store.remaining(c).chars).toBe(12000);
+    expect(store.remaining(c).chars).toBe(QA_POLICY.maxReadChars - 12000);
   });
   it("accepts split and repeated legitimate citation markers only once", async () => {
     model.stream = async (_u, _s, input, delta) => {
@@ -647,7 +658,8 @@ describe("selection QA bounded execution", () => {
     };
     const c = await claim();
     const turn = await run(c);
-    expect(turn.status).toBe("cancelled");
+    expect(turn.status).toBe("failed");
+    expect(turn.errorCode).toBe("CONTENT_VERSION_CHANGED");
     expect(turn.answer).toBe("partial");
     expect(records.conversation(1, c.conversation.id).status).toBe("frozen");
   });
@@ -690,7 +702,8 @@ describe("selection QA bounded execution", () => {
     });
     model.stream = jest.fn(async (_u, _s, input, delta) => {
       expect(JSON.parse(input.messages[input.messages.length - 1].content!).VERIFIED_EVIDENCE).toEqual([]);
-      expect(JSON.stringify(input.messages)).not.toContain("上一轮专有措辞");
+      expect(JSON.stringify(input.messages)).toContain("上一轮专有措辞");
+      expect(JSON.stringify(input.messages)).toContain("prior_model_output_not_source_evidence");
       await delta("基于模型通用知识：B+树的记录位于叶子节点，适合范围扫描。");
       return { usage, finishReason: "stop" };
     });
@@ -699,9 +712,9 @@ describe("selection QA bounded execution", () => {
     expect(books.context).not.toHaveBeenCalled();
     expect(books.replay).not.toHaveBeenCalled();
     expect(books.searchCandidates).not.toHaveBeenCalled();
-    expect(store.remaining(next)).toMatchObject({ tools: 6, chars: 24000, models: 4 });
+    expect(store.remaining(next)).toMatchObject({ tools: QA_POLICY.maxToolCalls, chars: QA_POLICY.maxReadChars, models: QA_POLICY.maxModelCalls - 3 });
   });
-  it.each([false, true])("reuses unsuccessful queries unless explicitly repeated (retry=%s)", async retry => {
+  it.each([false, true])("retains prior unsuccessful search observations while permitting another justified search (explicit=%s)", async retry => {
     const first = await claim();
     const queries = { query1: "B+树", query2: "B树", query3: "", query4: "" };
     const search = (name = "search_book") => [{ id: "search", name, arguments: JSON.stringify({ informationNeed: "索引差异", queries, ...(name === "repeat_book_search" ? { reason: "用户明确要求重新查找相同关键词" } : {}) }) }];
@@ -727,9 +740,9 @@ describe("selection QA bounded execution", () => {
     const next = store.claim("owner", Date.now())!;
     const turn = await run(next);
     expect(turn.status).toBe("completed");
-    expect(books.searchCandidates).toHaveBeenCalledTimes(retry ? 2 : 1);
+    expect(books.searchCandidates).toHaveBeenCalledTimes(2);
     expect(books.replay).not.toHaveBeenCalled();
-    expect(turn.process!.some(p => p.detail.operation === "search_reuse")).toBe(!retry);
+    expect(turn.process!.some(p => p.detail.operation === "search_book" && p.detail.state === "completed")).toBe(true);
   });
   it("replays historical evidence and assigns new turn-local IDs", async () => {
     const first = await claim();
@@ -739,7 +752,10 @@ describe("selection QA bounded execution", () => {
       question: "More",
     });
     const next = store.claim("owner", Date.now())!;
-    model.complete = jest.fn(async (_u, _s, input) => ({ usage, toolCalls: JSON.parse(input.messages[input.messages.length - 1].content!).VERIFIED_EVIDENCE.length ? finishPlan(input) : [{ id: "context", name: "read_selection_context", arguments: "{}" }] }));
+    model.complete = jest.fn(async (_u, _s, input) => {
+      const envelope = JSON.parse(input.messages[input.messages.length - 1].content!);
+      return { usage, toolCalls: envelope.VERIFIED_EVIDENCE.length ? finishPlan(input) : [{ id: "history", name: "read_history_evidence", arguments: JSON.stringify({ evidenceIds: envelope.historicalEvidenceAvailable.map((item: { evidenceId: string }) => item.evidenceId) }) }] };
+    });
     await run(next);
     expect(books.replay).toHaveBeenCalledTimes(1);
     const old = db
@@ -749,7 +765,7 @@ describe("selection QA bounded execution", () => {
       .prepare("SELECT evidence_id FROM selection_qa_evidence WHERE turn_id=?")
       .get(next.turn.id)!.evidence_id;
     expect(fresh).not.toBe(old);
-    expect(store.remaining(next).tools).toBe(4);
+    expect(store.remaining(next).tools).toBe(QA_POLICY.maxToolCalls - 1);
   });
   it("separates ACE allegations from SSD book queries and excludes irrelevant evidence from the final request", async () => {
     const c = await claim();
@@ -758,10 +774,10 @@ describe("selection QA bounded execution", () => {
     books.searchCandidates = jest.fn(async () => ({ state: "ready" as const, candidates: [relevant], budgetLimited: false, contextTruncated: false, unavailable: [] }));
     let round = 0;
     model.complete = jest.fn(async (_u, _s, input) => {
-      if (++round === 1) return { usage, toolCalls: [{ id: "ssd", name: "search_book", arguments: JSON.stringify({ informationNeed: "本书如何解释SSD的I/O", queries: { query1: "SSD 随机I/O", query2: "闪存 写放大", query3: "", query4: "" } }) }] };
+      if (++round === 1) return { usage, toolCalls: [contextCall, { id: "ssd", name: "search_book", arguments: JSON.stringify({ informationNeed: "本书如何解释SSD的I/O", queries: { query1: "SSD 随机I/O", query2: "闪存 写放大", query3: "", query4: "" } }) }] };
       const call = finishPlan(input)[0];
       const decision = JSON.parse(call.arguments);
-      decision.informationNeeds[0].evidenceIds = decision.informationNeeds[0].evidenceIds.slice(1);
+      decision.informationNeeds = [decision.informationNeeds[1]];
       decision.externalEvidenceNeeded = ["ACE是否频繁写盘并损坏SSD"];
       call.arguments = JSON.stringify(decision);
       return { usage, toolCalls: [call] };
@@ -777,12 +793,12 @@ describe("selection QA bounded execution", () => {
     const turn = await run(c);
     expect(turn.status).toBe("completed");
     expect(books.searchCandidates).toHaveBeenCalledWith(1, selection, expect.objectContaining({ queries: ["SSD 随机I/O", "闪存 写放大"] }));
-    const review = turn.process!.find(p => p.detail.operation === "finish_research")!.detail;
+    const review = turn.process!.find(p => p.detail.operation === "finish_research" && p.detail.state === "completed")!.detail;
     expect(review.rejectedEvidenceIds).toHaveLength(1);
     expect(review.selectedEvidenceIds).toHaveLength(1);
     expect(turn.citations.map(e => e.quote)).toEqual([relevant.quote]);
   });
-  it.each([false, true])("reranks rank 8, expands only its source and rejects its superseded citation (old=%s)", async (oldCitation) => {
+  it.each([false, true])("expands rank 8 on request, observes its new context and rejects an unselected original citation (old=%s)", async (oldCitation) => {
     const candidates = Array.from({ length: 20 }, (_, index) => evidence({ ...selection, start: 100 + index * 100, end: 104 + index * 100 }));
     books.searchCandidates = jest.fn(async () => ({ state: "ready" as const, candidates, budgetLimited: false, contextTruncated: false, unavailable: [] }));
     const source = candidates[7];
@@ -796,11 +812,15 @@ describe("selection QA bounded execution", () => {
     model.complete = jest.fn(async (_u, _s, input) => {
       if (++round === 1) return { usage, toolCalls: [{ id: "search", name: "search_book", arguments: JSON.stringify({ informationNeed: "查明因果", queries: { query1: "因果", query2: "", query3: "", query4: "" } }) }] };
       const envelope = JSON.parse(input.messages[input.messages.length - 1].content!);
-      expect(envelope.researchBudget.candidateIds).toHaveLength(20);
-      sourceId = envelope.researchBudget.candidateIds[7];
+      if (round === 2) {
+        expect(envelope.VERIFIED_EVIDENCE).toHaveLength(20);
+        sourceId = envelope.VERIFIED_EVIDENCE[7].evidenceId;
+        return { usage, toolCalls: [{ id: "expand", name: "expand_evidence", arguments: JSON.stringify({ evidenceIds: [sourceId], maxWindowChars: 1600 }) }] };
+      }
+      const expandedId = envelope.VERIFIED_EVIDENCE.find((item: { quote: string }) => item.quote === expanded.quote).evidenceId;
       const call = finishPlan(input)[0];
       const decision = JSON.parse(call.arguments);
-      decision.informationNeeds = [{ text: "查明因果", targetSource: "current_book", sourceName: "", evidenceIds: [sourceId] }];
+      decision.informationNeeds = [{ text: "查明因果", targetSource: "current_book", sourceName: "", evidenceIds: [expandedId] }];
       call.arguments = JSON.stringify(decision);
       return { usage, toolCalls: [call] };
     });
@@ -816,7 +836,7 @@ describe("selection QA bounded execution", () => {
     const c = await claim(), turn = await run(c);
     expect(books.searchCandidates).toHaveBeenCalledWith(1, selection, expect.objectContaining({ limit: 20, maxChars: 12000 }));
     expect(books.expandSelected).toHaveBeenCalledTimes(1);
-    expect(24000 - store.remaining(c).chars).toBe(4 + 20 * 4 + expanded.quote.length);
+    expect(QA_POLICY.maxReadChars - store.remaining(c).chars).toBe(20 * 4 + expanded.quote.length);
     const expansion = turn.process!.find(p => p.detail.operation === "evidence_expansion" && p.detail.state === "completed")!;
     expect(finalId).toBe("s1");
     const savedId = (expansion.detail.results as any[])[0].evidenceId;
@@ -850,10 +870,12 @@ describe("selection QA bounded execution", () => {
     });
     model.stream = jest.fn(async (_u, _s, input, delta) => {
       const serialized = JSON.stringify(input.messages);
-      expect(serialized).not.toContain("书中没有任何产品案例");
+      expect(serialized).toContain("model_identified_unverified_gaps");
       expect(serialized).not.toContain("全书未提供实测结论");
       const envelope = JSON.parse(input.messages[input.messages.length - 1].content!);
       expect(envelope.RESEARCH_DECISION.evidenceInsufficient).toBe(true);
+      expect(envelope.RESEARCH_DECISION.insufficientEvidence).toEqual(["书中没有任何产品案例"]);
+      expect(input.messages[0].content).toContain("They are not book facts or evidence of whole-book absence");
       expect(envelope.RESEARCH_DECISION).not.toHaveProperty("conclusion");
       await delta("就本次取得的片段，尚不能确认这一说法。");
       return { usage, finishReason: "stop" };
@@ -864,13 +886,14 @@ describe("selection QA bounded execution", () => {
   });
   it("allows useful general explanation alongside book evidence without a blanket host refusal", async () => {
     model.complete = jest.fn(async (_u, _s, input) => {
+      if (withContext(input)) return { usage, toolCalls: [contextCall] };
       const call = finishPlan(input)[0];
       call.arguments = JSON.stringify({ ...JSON.parse(call.arguments), externalEvidenceNeeded: ["具体产品实测结果"], insufficientEvidence: ["未取得外部实测"] });
       return { usage, toolCalls: [call] };
     });
     model.stream = jest.fn(async (_u, _s, input, delta) => {
       const envelope = JSON.parse(input.messages[input.messages.length - 1].content!);
-      expect(envelope.answerScope).toBe("answer_question_with_source_attribution");
+      expect(input.messages[0].content).toContain("Keep useful conceptual explanations distinct");
       await delta("书内说明。[[evidence:s1]]");
       return { usage, finishReason: "stop" };
     });
@@ -910,6 +933,7 @@ describe("selection QA bounded execution", () => {
   it("rejects citations to candidates excluded by the planner", async () => {
     let excluded = "";
     model.complete = jest.fn(async (_u, _s, input) => {
+      if (withContext(input)) return { usage, toolCalls: [contextCall] };
       excluded = idFrom(input);
       const call = finishPlan(input)[0];
       const decision = JSON.parse(call.arguments);
@@ -929,7 +953,7 @@ describe("selection QA bounded execution", () => {
     let calls = 0;
     model.complete = jest.fn(async (_u, _s, input) => {
       if (++calls === 1) return { usage, content: "无需检索", reasoningContent: "opaque-continuation", toolCalls: [] };
-      expect(input.messages.some(m => m.role === "user" && m.content?.includes("does not perform a search"))).toBe(true);
+      expect(input.messages.some(m => m.role === "user" && m.content?.includes("No action was executed"))).toBe(true);
       return { usage, toolCalls: finishPlan(input) };
     });
     const turn = await run(await claim());
@@ -945,22 +969,26 @@ describe("selection QA bounded execution", () => {
       if (kind === "missing") return { usage, content: "READY", toolCalls: [] };
       if (kind === "foreign") {
         const decision = JSON.parse(calls[0].arguments);
+        decision.informationNeeds[0].targetSource = "current_book";
         decision.informationNeeds[0].evidenceIds = ["another-turn-id"];
         calls[0].arguments = JSON.stringify(decision);
       }
       if (kind === "mixed") calls.push({ id: "search", name: "search_book", arguments: JSON.stringify({ informationNeed: "测试", queries: { query1: "text", query2: "", query3: "", query4: "" } }) });
       return { usage, toolCalls: calls };
     });
-    expect((await run(await claim())).errorCode).toBe(({ missing: "MODEL_DECISION_REQUIRED", foreign: "EVIDENCE_INVALID", mixed: "MODEL_CONTROL_TOOL_MIXED" })[kind]);
-    expect(model.stream).not.toHaveBeenCalled(); expect(books.searchCandidates).not.toHaveBeenCalled();
-    if (kind === "missing") expect(model.complete).toHaveBeenCalledTimes(3);
+    expect((await run(await claim())).errorCode).toBe(({ missing: "NO_PROGRESS", foreign: "EVIDENCE_INVALID", mixed: "MODEL_CONTROL_TOOL_MIXED" })[kind]);
+    expect(books.searchCandidates).not.toHaveBeenCalled();
+    if (kind === "missing") {
+      expect(model.complete).toHaveBeenCalledTimes(2);
+      expect(model.stream).toHaveBeenCalledTimes(1);
+    } else expect(model.stream).not.toHaveBeenCalled();
   });
-  it("requires the last planning call to review rather than fetch unchecked evidence", async () => {
+  it("bounds repeated unchanged observations and preserves the final stream", async () => {
     model.complete = jest.fn(async () => ({ usage, toolCalls: [{ id: "s", name: "search_book", arguments: JSON.stringify({ informationNeed: "解释本书概念", queries: { query1: "text", query2: "", query3: "", query4: "" } }) }] }));
     const turn = await run(await claim());
-    expect(turn.errorCode).toBe("MODEL_DECISION_REQUIRED");
+    expect(turn.errorCode).toBe("NO_PROGRESS");
     expect(books.searchCandidates).toHaveBeenCalledTimes(2);
-    expect(model.stream).not.toHaveBeenCalled();
+    expect(model.stream).toHaveBeenCalledTimes(1);
   });
   it("finishes with stated limitations after one rewrite still finds nothing", async () => {
     books.searchCandidates = jest.fn(async () => ({ state: "ready" as const, candidates: [], budgetLimited: false, contextTruncated: false, unavailable: [] }));
@@ -1008,7 +1036,7 @@ describe("selection QA bounded execution", () => {
   });
   it("raises planning/answer output to 3072/8192 while honoring smaller model limits", async () => {
     const c = await claim(); c.snapshot = { ...snapshot, maxOutputTokens: 16384 };
-    expect(c.turn.deadline - c.turn.createdAt).toBe(240000);
+    expect(c.turn.deadline - c.turn.createdAt).toBe(QA_POLICY.deadlineMs);
     expect((await run(c)).status).toBe("completed");
     expect((model.complete as jest.Mock).mock.calls[0][2].maxOutputTokens).toBe(3072);
     expect((model.stream as jest.Mock).mock.calls[0][2].maxOutputTokens).toBe(8192);
@@ -1033,10 +1061,11 @@ describe("selection QA bounded execution", () => {
     expect(turn.errorCode).toBeNull();
     const input = (model.stream as jest.Mock).mock.calls[0][2] as QaModelInput;
     const final = JSON.parse(input.messages[input.messages.length - 1].content!);
-    expect(final.RESEARCH_LIMITATIONS).toMatchObject({ budgetExhausted: false, candidateBudgetLimited: true });
+    expect(final.RESEARCH_LIMITATIONS).toMatchObject({ budgetExhausted: false });
+    expect(JSON.parse(final.HOST_OBSERVATIONS.observations[0].result).budgetLimited).toBe(true);
     expect(final.RESEARCH_LIMITATIONS.remainingReadChars).toBeGreaterThan(0);
     expect(final.researchStatusInstruction).toContain("searches completed without failure");
-    expect(final.researchStatusInstruction).toContain("No round research budget constraint");
+    expect(final.researchStatusInstruction).toContain("No host execution limit");
   });
 
   it("does not complete an evidence-backed answer with unbound numeric citations", async () => {
@@ -1046,6 +1075,99 @@ describe("selection QA bounded execution", () => {
       await delta("书内事实[1]"); return { usage, finishReason: "stop" };
     });
     expect(await run(await claim())).toMatchObject({ status: "failed", errorCode: "CITATION_INVALID", answer: "书内事实[1]" });
+  });
+
+  // These exercise the actual checker and persistent runtime, without the
+  // passingQualityFixture used by action-specific P0 regressions above.
+  it("corrects an actual rejected draft through the same action loop and replays only the current version", async () => {
+    const expanded = evidence({ ...selection, canonicalQuote: "text，仅适用于允许陈旧数据的场景", displayedQuote: "text，仅适用于允许陈旧数据的场景", end: 19 });
+    expanded.end = expanded.quote.length;
+    expanded.locator.position.end = expanded.end;
+    books.expandSelected = jest.fn(async (_u, _s, input) => ({ candidates: [expanded], contextWindows: [{ sectionIndex: 0, start: 0, end: expanded.end, hitRanges: input.evidence.map(e => ({ sectionIndex: 0, start: e.start, end: e.end })) }], contextTruncated: false }));
+    let checks = 0, actedOnFeedback = false, drafts = 0;
+    model.complete = jest.fn(async (_u, _s, input) => {
+      // Providers reject an assistant turn with neither content nor tool calls (HTTP 400).
+      expect(input.messages.filter(m => m.role === "assistant" && !m.content && !m.toolCalls?.length)).toEqual([]);
+      const checking = input.tools?.some(t => t.function.name === "assess_answer");
+      if (checking) {
+        const draft = JSON.parse(input.messages.find(m => m.content?.includes('"actualFrozenAnswer"'))!.content!);
+        expect(draft.actualFrozenAnswer).toContain(checks ? "允许陈旧" : "任何场景");
+        const verdict = checks++ ? { verdict: "pass", issues: [] } : { verdict: "revise", issues: [{ claim: "任何场景", problem: "未核实适用范围", evidenceIds: ["s1"], action: "补充限定再回答" }] };
+        return { usage, toolCalls: [{ id: `judge-${checks}`, name: "assess_answer", arguments: JSON.stringify(verdict) }] };
+      }
+      if (withContext(input)) return { usage, toolCalls: [contextCall] };
+      if (checks === 1 && !actedOnFeedback) {
+        expect(input.messages.some(m => m.content?.includes("fallible_quality_assessment_not_source_evidence"))).toBe(true);
+        actedOnFeedback = true;
+        return { usage, toolCalls: [{ id: "expand-after-check", name: "expand_evidence", arguments: JSON.stringify({ evidenceIds: [idFrom(input)], maxWindowChars: 100 }) }] };
+      }
+      return { usage, toolCalls: finishPlan(input) };
+    });
+    model.stream = jest.fn(async (_u, _s, input, delta) => {
+      const passages = JSON.parse(input.messages[input.messages.length - 1].content!).VERIFIED_EVIDENCE;
+      await delta(`${drafts++ ? "仅适用于允许陈旧数据的场景" : "适用于任何场景"} [[evidence:${passages[passages.length - 1].evidenceId}]]`);
+      return { usage, finishReason: "stop" };
+    });
+    executor = new SelectionQaExecutor(store, model, books, { get: () => ({ bookId: 1, title: "测试书" }) }, env => new QaToolRegistry([...createQaReadingTools(env), ...createQaDeliveryTools(env.ledger, env.currentBook)]));
+    const c = await claim();
+    const result = await run(c);
+    expect(result).toMatchObject({ status: "completed", answerVersion: 2, quality: { verdict: "pass", answerVersion: 2 } });
+    expect(result.answer).toContain("仅适用于允许陈旧");
+    expect(result.answer).not.toContain("任何场景");
+    expect(result.citations).toHaveLength(1);
+    const events = records.events(1, c.turn.id, 0);
+    let version = 0, answer = "", citations: string[] = [];
+    for (const event of events) {
+      if (event.data.operation === "answer_version") { version = Number(event.data.answerVersion); answer = ""; citations = []; }
+      if (event.kind === "answer_delta") { expect(event.data.answerVersion).toBe(version); answer += event.data.text; }
+      if (event.kind === "citation") { expect(event.data.answerVersion).toBe(version); citations.push((event.data.evidence as { evidenceId: string }).evidenceId); }
+    }
+    expect(answer).toBe(result.answer);
+    expect(citations).toEqual(result.citations.map(e => e.evidenceId));
+    expect(events[events.length - 1].data).toMatchObject({ answerVersion: 2, answer, quality: { verdict: "pass", answerVersion: 2 } });
+  });
+
+  it.each(["checking", "revising", "revised_checking"].flatMap(stage => ["cancel", "replace", "timeout", "restart", "restart_expired"].map(cause => ({stage,cause}))))("fences late model results after $cause during $stage", async ({stage,cause}) => {
+    let checks = 0;
+    const terminate = (turnId: string) => {
+      if (cause === "cancel") service.stop(1, turnId);
+      if (cause === "replace") current = false;
+      if (cause === "timeout" || cause === "restart_expired") db.prepare("UPDATE selection_qa_turns SET deadline=1 WHERE id=?").run(turnId);
+      if (cause.startsWith("restart")) {
+        db.prepare("UPDATE selection_qa_turns SET lease_expires_at=1 WHERE id=?").run(turnId);
+        const recreated = new SqliteSelectionQaRuntimeStore({getDatabase:()=>db} as SqliteService,records,{resolve:async()=>selection,assertCurrent:()=>{}});
+        recreated.maintain(Date.now());
+        expect(recreated.claim("replacement",Date.now())).toBeNull();
+      }
+    };
+    model.complete = jest.fn(async (_u, _s, input) => {
+      if (input.tools?.some(t => t.function.name === "assess_answer")) {
+        if(stage!=="checking" && checks++===0)
+          return {usage,toolCalls:[{id:"revise",name:"assess_answer",arguments:JSON.stringify({verdict:"revise",issues:[{claim:"范围",problem:"遗漏限定",evidenceIds:[],action:"修订"}]})}]};
+        if(stage!=="revising")terminate(input.turnId!);
+        return { usage, toolCalls: [{ id: "late", name: "assess_answer", arguments: '{"verdict":"pass","issues":[]}' }] };
+      }
+      if(stage==="revising" && checks===1)terminate(input.turnId!);
+      return { usage, toolCalls: withContext(input) ? [contextCall] : finishPlan(input) };
+    });
+    executor = new SelectionQaExecutor(store, model, books, { get: () => ({ bookId: 1, title: "测试书" }) }, env => new QaToolRegistry([...createQaReadingTools(env), ...createQaDeliveryTools(env.ledger, env.currentBook)]));
+    const c = await claim();
+    const result = await run(c);
+    expect(result.status).toBe(cause === "cancel" ? "cancelled" : ["timeout","restart_expired"].includes(cause) ? "timed_out" : "failed");
+    expect(result.quality?.verdict).not.toBe("pass");
+    if(cause==="restart")expect(result.errorCode).toBe("worker_interrupted");
+    if(cause==="restart_expired")expect(result.errorCode).toBe("DEADLINE_EXCEEDED");
+    expect(records.events(1, c.turn.id, 0).filter(e => e.kind === "terminal")).toHaveLength(1);
+    const before=records.turn(1,c.turn.id);
+    expect(()=>store.append(c,"迟到正文",[])).toThrow("LEASE_LOST");
+    expect(records.turn(1,c.turn.id)).toEqual(before);
+  });
+
+  it("does not reuse a previous pass for a changed answer version", async () => {
+    const c = await claim();
+    await run(c);
+    // Terminal fencing prevents reopening a completed run even with the same lease.
+    expect(() => store.beginAnswer(c, 2)).toThrow("LEASE_LOST");
   });
 
 });

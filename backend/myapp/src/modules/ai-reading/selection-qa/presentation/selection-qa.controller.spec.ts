@@ -100,7 +100,7 @@ describe("selection QA HTTP", () => {
       .send({ bookId: 1, selection: { scope: {} } })
       .expect(400);
     await request(app.getHttpServer())
-      .post("/api/v1/selection-qa/conversations")
+      .post("/api/v1/selection-qa/conversations").set("X-Selection-QA-Protocol", "2")
       .send({ bookId: 1, selection, commandId: "a", question: "  " })
       .expect(400);
     await request(app.getHttpServer())
@@ -116,7 +116,7 @@ describe("selection QA HTTP", () => {
       .expect(404);
     expect(failed.body.details.reason).toBe("BOOK_NOT_FOUND");
     const created = await request(app.getHttpServer())
-      .post("/api/v1/selection-qa/conversations")
+      .post("/api/v1/selection-qa/conversations").set("X-Selection-QA-Protocol", "2")
       .send({ bookId: 1, selection, commandId: "a", question: "q" })
       .expect(201);
     await request(app.getHttpServer())
@@ -134,6 +134,7 @@ describe("selection QA HTTP", () => {
     const url = await app.getUrl();
     const response = await fetch(
       `${url}/api/v1/selection-qa/turns/${created.turn.id}/events`,
+      { headers: { "X-Selection-QA-Protocol": "2" } },
     );
     const reader = response.body!.getReader();
     const initial = await reader.read();
@@ -157,6 +158,7 @@ describe("selection QA HTTP", () => {
     })) as { turn: { id: string } };
     const response = await fetch(
       `${await app.getUrl()}/api/v1/selection-qa/turns/${created.turn.id}/events`,
+      { headers: { "X-Selection-QA-Protocol": "2" } },
     );
     await response.body!.cancel();
     expect(service.getTurn(1, created.turn.id).status).toBe("queued");

@@ -1,11 +1,19 @@
+import { BOOK_STRUCTURED_CONTENT_PORT, type BookStructuredContentPort } from "../../intelligent-library/public/book-structured-content.port";
+import { SelectionQaStructureAdapter } from "./infrastructure/selection-qa-structure.adapter";
+import { createQaReadingTools } from "./application/tools/qa-reading-tools";
+import { createQaDeliveryTools } from "./application/tools/qa-delivery-tools";
+import { QaToolRegistry } from "./application/tools/qa-tool-registry";
 import { SelectionQaLocationController } from "./presentation/selection-qa-location.controller";
 import { SelectionQaLocationService } from "./application/selection-qa-location.service";
 import { SelectionQaScheduler } from "./infrastructure/selection-qa.scheduler";
 import { SelectionQaExecutor } from "./application/selection-qa.executor";
 import {
   SELECTION_QA_MODEL_PORT,
+  SELECTION_QA_SEARCH_MODE,
   QaModelPort,
+  type QaSearchMode,
 } from "./application/selection-qa-runtime.port";
+import { selectionQaSearchMode } from "./infrastructure/selection-qa-reranker.adapter";
 import { SelectionQaModelAdapter } from "./infrastructure/selection-qa-model.adapter";
 import { SelectionQaBooksAdapter } from "./infrastructure/selection-qa-books.adapter";
 import { SelectionQaCurrentBookAdapter } from "./infrastructure/selection-qa-current-book.adapter";
@@ -17,6 +25,8 @@ import {
   MODEL_CONFIG_PORT,
   MODEL_PROFILE_REGISTRY,
   TOKEN_ESTIMATOR_REGISTRY,
+  RERANKER_SETTINGS,
+  type RerankerSettings,
   LanguageModelPort,
   ModelConfigPort,
   ModelCapabilityCatalog,
@@ -53,6 +63,8 @@ import { SelectionQaController } from "./presentation/selection-qa.controller";
   ],
   controllers: [SelectionQaController, SelectionQaLocationController],
   providers: [
+    { provide: SELECTION_QA_SEARCH_MODE, inject: [RERANKER_SETTINGS], useFactory: (settings: RerankerSettings) => selectionQaSearchMode(settings) },
+    { provide: SelectionQaStructureAdapter, inject: [BOOK_STRUCTURED_CONTENT_PORT], useFactory: (books: BookStructuredContentPort) => new SelectionQaStructureAdapter(books) },
     SqliteSelectionQaRepository,
     {
       provide: SelectionQaLocationService,
@@ -113,13 +125,17 @@ import { SelectionQaController } from "./presentation/selection-qa.controller";
         SELECTION_QA_MODEL_PORT,
         SelectionQaBooksAdapter,
         SelectionQaCurrentBookAdapter,
+        SelectionQaStructureAdapter,
+        SELECTION_QA_SEARCH_MODE,
       ],
       useFactory: (
         store: SqliteSelectionQaRuntimeStore,
         model: QaModelPort,
         books: SelectionQaBooksAdapter,
         currentBook: SelectionQaCurrentBookAdapter,
-      ) => new SelectionQaExecutor(store, model, books, currentBook),
+        structure: SelectionQaStructureAdapter,
+        mode: QaSearchMode,
+      ) => new SelectionQaExecutor(store, model, books, currentBook, env => new QaToolRegistry([...createQaReadingTools(env, mode), ...createQaDeliveryTools(env.ledger, env.currentBook)]), structure),
     },
     {
       provide: SelectionQaScheduler,

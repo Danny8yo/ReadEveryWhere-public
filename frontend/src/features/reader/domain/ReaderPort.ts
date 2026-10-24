@@ -4,7 +4,7 @@
  * 设计目标（见 plan 第〇节）：让"具体阅读器引擎"可替换、让"笔记/AI"只依赖
  * 规范化定位与文档模型，而绝不直接依赖 foliate-js。
  *
- * 依赖纪律：只有 `lib/reader/adapters/*` 允许 import `lib/foliate-js`。
+ * 依赖纪律：只有 `features/reader/web/*` 允许 import `vendor/foliate-js`。
  * 业务层（composables、components、services、AI）一律经由本文件的类型与接口。
  */
 // ---------------------------------------------------------------------------

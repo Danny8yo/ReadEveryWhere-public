@@ -164,15 +164,18 @@ export class SqliteSelectionQaRepository implements SelectionQaStore {
   stop(userId: number, id: string, reason = "USER_STOPPED"): Turn {
     const current = this.turn(userId, id);
     if (!["queued", "running"].includes(current.status)) return current;
+    const status = reason === "CONTENT_VERSION_CHANGED" ? "failed" : "cancelled";
     this.db
       .prepare(
-        "UPDATE selection_qa_turns SET status='cancelled',phase='terminal',error_code=?,lease_generation=lease_generation+1,lease_token=NULL,updated_at=? WHERE user_id=? AND id=?",
+        "UPDATE selection_qa_turns SET status=?,phase='terminal',error_code=?,lease_generation=lease_generation+1,lease_token=NULL,lease_owner=NULL,lease_expires_at=NULL,updated_at=? WHERE user_id=? AND id=?",
       )
-      .run(reason, Date.now(), userId, id);
+      .run(status, reason, Date.now(), userId, id);
     this.event(userId, id, "terminal", {
-      status: "cancelled",
+      status,
       reason,
       answer: current.answer,
+      answerVersion: current.answerVersion,
+      quality: current.quality,
     });
     return this.turn(userId, id);
   }
@@ -242,7 +245,7 @@ export class SqliteSelectionQaRepository implements SelectionQaStore {
       )
       .all(userId, id, after)
       .map((row) => ({
-        schemaVersion: 1,
+        schemaVersion: 2,
         turnId: id,
         sequence: Number(row.sequence),
         kind: row.kind as SelectionQaEvent["kind"],
@@ -287,7 +290,12 @@ export class SqliteSelectionQaRepository implements SelectionQaStore {
     };
   }
   private mapTurn(r: Record<string, unknown>): Turn {
+    const versionEvent = this.db.prepare("SELECT sequence,payload_json FROM selection_qa_events WHERE user_id=? AND turn_id=? AND kind='status' AND json_extract(payload_json,'$.operation')='answer_version' ORDER BY sequence DESC LIMIT 1").get(Number(r.user_id), String(r.id));
+    const version = versionEvent ? Number(JSON.parse(String(versionEvent.payload_json)).answerVersion) : undefined;
+    const qualityEvent = this.db.prepare("SELECT payload_json FROM selection_qa_events WHERE user_id=? AND turn_id=? AND kind='status' AND json_extract(payload_json,'$.operation')='quality_check' AND json_extract(payload_json,'$.state')='completed' AND sequence>? ORDER BY sequence DESC LIMIT 1").get(Number(r.user_id), String(r.id), versionEvent ? Number(versionEvent.sequence) : Number(r.last_sequence));
     return {
+      ...(version !== undefined ? { answerVersion: version } : {}),
+      ...(qualityEvent ? { quality: JSON.parse(String(qualityEvent.payload_json)).judgment } : {}),
       id: String(r.id),
       userId: Number(r.user_id),
       conversationId: String(r.conversation_id),
@@ -318,9 +326,9 @@ export class SqliteSelectionQaRepository implements SelectionQaStore {
         }),
       citations: this.db
         .prepare(
-          "SELECT payload_json FROM selection_qa_events WHERE user_id=? AND turn_id=? AND kind='citation' AND sequence<=? ORDER BY sequence",
+          "SELECT payload_json FROM selection_qa_events WHERE user_id=? AND turn_id=? AND kind='citation' AND sequence<=? AND sequence>? ORDER BY sequence",
         )
-        .all(Number(r.user_id), String(r.id), Number(r.last_sequence))
+        .all(Number(r.user_id), String(r.id), Number(r.last_sequence), versionEvent ? Number(versionEvent.sequence) : 0)
         .map((event) => JSON.parse(String(event.payload_json)).evidence),
       createdAt: Number(r.created_at),
       updatedAt: Number(r.updated_at),

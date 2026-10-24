@@ -31,6 +31,8 @@ testbook/
 **/test-results/
 **/playwright-report/
 **/playwright/.cache/
+**/blob-report/
+frontend/visual-shots/
 
 # === 编辑器 / 工具 / 系统 ===
 .DS_Store

@@ -1,8 +1,18 @@
 // @vitest-environment happy-dom
-import { mount, type VueWrapper } from '@vue/test-utils';
-import { describe, expect, it, vi } from 'vitest';
-import BookDetailModal from '../components/BookDetailModal.vue';
+import { enableAutoUnmount, mount, type VueWrapper } from '@vue/test-utils';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import BookDetailModal from '../features/book-detail/ui/BookDetailModal.vue';
 import type { SearchResultItem } from '../features/discovery/model/book';
+import BookDetailContent from '../features/book-detail/ui/BookDetailContent.vue';
+import { bodyView } from './helpers/bodyView';
+
+// 详情（P5）和画像抽屉（P6）都是 UiOverlay，Teleport 到 body：挂到真实 body，从 body 查询 DOM，
+// analyze 等事件从详情内容组件读取（由它发出）。断言保持不变。
+enableAutoUnmount(afterEach);
+function mountModal(options: Parameters<typeof mount>[1]): VueWrapper {
+  const modal = mount(BookDetailModal, { ...(options as object), attachTo: document.body });
+  return bodyView(modal.findComponent(BookDetailContent) as VueWrapper);
+}
 
 const baseBook: SearchResultItem = {
   id: 'library:42',
@@ -46,7 +56,7 @@ function withAnalysis(bookAnalysis: AnalysisSummary | null): SearchResultItem {
 }
 
 function mountDetail(bookAnalysis: AnalysisSummary | null): VueWrapper {
-  return mount(BookDetailModal, {
+  return mountModal({
     props: {
       isOpen: true,
       book: withAnalysis(bookAnalysis),
@@ -68,7 +78,7 @@ async function openProfileDrawer(wrapper: VueWrapper) {
 
 describe('BookDetailModal 书籍画像', () => {
   it('书架详情默认只展示画像摘要，并从入口打开编辑抽屉', async () => {
-    const wrapper = mount(BookDetailModal, {
+    const wrapper = mountModal({
       props: {
         isOpen: true,
         book: {
@@ -97,7 +107,7 @@ describe('BookDetailModal 书籍画像', () => {
   });
 
   it('书架详情直接展示已保存评分并提供重新抓取入口', () => {
-    const wrapper = mount(BookDetailModal, {
+    const wrapper = mountModal({
       props: {
         isOpen: true,
         book: {
@@ -201,7 +211,7 @@ describe('BookDetailModal 书籍画像', () => {
   });
 
   it('已应用分析仍显示完成状态，但不再显示重复应用按钮，并将次类型显示为中文', async () => {
-    const wrapper = mount(BookDetailModal, {
+    const wrapper = mountModal({
       props: {
         isOpen: true,
         book: {

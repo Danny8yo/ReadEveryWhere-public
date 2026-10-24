@@ -4,6 +4,7 @@ import { NORMALIZATION_VERSION, EPUB_EXTRACTOR_VERSION } from "@readeverywhere/e
 import type { BookDocumentExtractorPort } from "../application/ports/book-document-extractor.port";
 import type { BookDocument, ContentRevision } from "../domain/book-document.types";
 import { EpubDocumentProjector } from "./epub-document.projector";
+import { checkContentExecution, type ContentExecution } from "../application/ports/content-execution";
 
 export const EPUB_NORMALIZATION_VERSION = NORMALIZATION_VERSION;
 
@@ -11,7 +12,10 @@ export const EPUB_NORMALIZATION_VERSION = NORMALIZATION_VERSION;
 export class EpubDocumentExtractor implements BookDocumentExtractorPort {
   readonly extractorVersion = EPUB_EXTRACTOR_VERSION;
   readonly normalizationVersion = EPUB_NORMALIZATION_VERSION;
-  async extract(bookId: number, buffer: Buffer, revision: ContentRevision): Promise<BookDocument> {
-    return new EpubDocumentProjector().project(bookId, revision, await parseEpub(buffer));
+  async extract(bookId: number, buffer: Buffer, revision: ContentRevision, execution?: ContentExecution): Promise<BookDocument> {
+    checkContentExecution(execution);
+    const parsed = await parseEpub(buffer, execution ? { signal: execution.signal, timeoutMs: execution.deadline - Date.now() } : undefined);
+    checkContentExecution(execution);
+    return new EpubDocumentProjector().project(bookId, revision, parsed);
   }
 }

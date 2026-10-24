@@ -1,7 +1,25 @@
+import type { Turn } from '../model/selectionQa';
+
+export function qaTerminalLabel(turn: Pick<Turn, 'status' | 'errorCode'>): string {
+  if (turn.status === 'queued' || turn.status === 'running') throw new Error('活动问答没有终态标签。');
+  if (turn.status === 'completed') return '已完成';
+  if (turn.status === 'cancelled') return '已停止';
+  return turn.errorCode !== null && [
+    'READ_BUDGET_EXHAUSTED', 'RESEARCH_BUDGET_EXHAUSTED', 'INPUT_TOKEN_LIMIT',
+    'MODEL_OUTPUT_BUDGET_EXCEEDED', 'OUTPUT_LIMIT',
+  ].includes(turn.errorCode) ? '资源受限' : '未完成';
+}
+
 export function qaReason(code: string): string {
   return (
     (
       {
+        QA_PROTOCOL_UPGRADE_REQUIRED: "请刷新页面以使用新版问答。",
+        QUALITY_PROTOCOL_INVALID: "回答检查返回了无效结果，本轮未完成。",
+        QUALITY_REVISION_EXHAUSTED: "回答经过修订仍有未解决的问题，未通过检查。",
+        QUALITY_EVIDENCE_INSUFFICIENT: "回答所需证据尚不充分，本轮未通过检查。",
+        ANSWER_VERSION_MISMATCH: "回答版本已变化，请重新预览。",
+        UNVERIFIED_ANSWER_CONFIRMATION_REQUIRED: "请确认保存尚未完成或核验的回答。",
         TOOL_ARGUMENTS_INVALID: "模型生成的书内工具参数不合法，本轮未完成。",
         MODEL_DECISION_REQUIRED: "模型未提交有效的查阅结论，本轮已停止。",
         MODEL_CONTROL_TOOL_MIXED: "模型混用了结束查阅和书内操作，本轮已停止。",
@@ -36,7 +54,8 @@ export function qaReason(code: string): string {
         worker_interrupted: "服务中断，请显式重试",
         MODEL_CANCELLED: "模型请求已取消",
         READ_BUDGET_EXHAUSTED: "本轮读取字数已达上限",
-        RESEARCH_BUDGET_EXHAUSTED: "本轮检索预算已用完",
+        RESEARCH_BUDGET_EXHAUSTED: "本轮行动已达到资源上限，已有结果可能不完整",
+        NO_PROGRESS: "连续行动未取得新信息，本轮已结束，可补充问题后重新提问",
         INPUT_TOKEN_LIMIT: "本轮上下文过长，请缩短问题或新建对话",
         CONVERSATION_NOT_FOUND: "该对话已删除或无权访问",
         TURN_NOT_FOUND: "该轮问答已删除或无权访问",

@@ -1,5 +1,5 @@
 import type { ScrapedResult, MatchedMetadataCandidate, DoubanRatingCandidate, SavedDoubanRating } from '../model/metadata';
-import { request } from '../../../services/apiClient';
+import { request } from '../../../shared/web/apiClient';
 import type { LibraryBook } from '../../library/model/library';
 export const scrapeMetadata = (input: {
     provider: 'zlibrary' | 'douban';

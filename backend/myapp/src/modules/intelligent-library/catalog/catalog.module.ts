@@ -46,7 +46,6 @@ import { BookArtifactGcWorker } from "./infrastructure/book-artifact-gc.worker";
 import { GetBookReadingProfileUseCase } from "./application/use-cases/get-book-reading-profile.use-case";
 import { EditBookReadingProfileUseCase } from "./application/use-cases/edit-book-reading-profile.use-case";
 import { ClearBookReadingProfileUseCase } from "./application/use-cases/clear-book-reading-profile.use-case";
-import { CatalogBookReadingProfileAdapter } from "./infrastructure/catalog-book-reading-profile.adapter";
 import {
   APPLY_BOOK_READING_PROFILE_CANDIDATE_PORT,
 } from "./application/ports/apply-book-reading-profile-candidate.port";
@@ -75,11 +74,6 @@ import { ApplyBookReadingProfileCandidateUseCase } from "./application/use-cases
     { provide: PDF_PAGE_TREE_OPTIMIZER_PORT, useExisting: QpdfPageTreeOptimizerAdapter },
     { provide: BOOK_DUPLICATE_QUERY_PORT, useExisting: SqliteBookDuplicateQuery },
     { provide: CATALOG_BOOK_VIEW_QUERY_PORT, useExisting: SqliteCatalogBookViewQuery },
-    {
-      provide: CatalogBookReadingProfileAdapter,
-      inject: [CATALOG_BOOK_VIEW_QUERY_PORT],
-      useFactory: (books: CatalogBookViewQueryPort) => new CatalogBookReadingProfileAdapter(books),
-    },
     { provide: BOOK_FILE_STREAMING_QUERY_PORT, useExisting: SqliteBookFileStreamingQuery },
     { provide: BOOK_CONTENT_CATALOG_PORT, useExisting: SqliteBookContentCatalogQuery },
     EpubMetadataParser,
@@ -222,7 +216,6 @@ import { ApplyBookReadingProfileCandidateUseCase } from "./application/use-cases
     EditBookReadingProfileUseCase,
     ClearBookReadingProfileUseCase,
     APPLY_BOOK_READING_PROFILE_CANDIDATE_PORT,
-    CatalogBookReadingProfileAdapter,
   ],
 })
 export class CatalogModule {}

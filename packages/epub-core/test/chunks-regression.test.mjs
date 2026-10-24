@@ -274,3 +274,24 @@ test('preserved expansion accepts twelve selected ranges under one shared budget
     hits.forEach((hit, rank) => assert.deepEqual(result[rank].hitRanges, [{ sectionIndex: 0, start: hit.start, end: hit.end }]));
     assert.throws(() => expandEpubEvidence(built.bytes, built.scope, [...hits, hits[0]], { maxChars: 8000, maxWindowChars: 1600, limit: 13, preserveAllHits: true }), /Invalid evidence expansion budget/);
 });
+
+test('dual index streams are produced in the worker for every chunk and match the shared tokenizers', async () => {
+    const { tokenizeBigrams, tokenizeWords, tokenizeKeywords, DUAL_TOKENIZER_VERSION, TOKENIZER_VERSION } = await import('../src/keywords.js')
+    const zip = new AdmZip()
+    for (const [name, text] of Object.entries(resourcesFor({ source: wrap('<p>使用了临时表的查询会等待锁。</p><p>随机I/O比顺序访问慢。</p>'), mediaType: 'application/xhtml+xml' })))
+        zip.addFile(name, Buffer.from(text))
+    const bytes = zip.toBuffer(), dual = [], plain = []
+    const result = await buildEpubIndex(bytes, { streams: 'dual', onBatch: batch => { dual.push(...batch) } })
+    assert.equal(result.tokenizerVersion, DUAL_TOKENIZER_VERSION)
+    assert.ok(dual.length > 0)
+    for (const chunk of dual) {
+        assert.equal(chunk.tokens, tokenizeKeywords(chunk.quote).join(' '))
+        assert.equal(chunk.bigramTokens, tokenizeBigrams(chunk.quote).join(' '))
+        assert.equal(chunk.wordTokens, tokenizeWords(chunk.quote, 'index').join(' '))
+    }
+    const charOnly = await buildEpubIndex(bytes, { onBatch: batch => { plain.push(...batch) } })
+    assert.equal(charOnly.tokenizerVersion, TOKENIZER_VERSION)
+    assert.ok(plain.every(chunk => chunk.bigramTokens === undefined && chunk.wordTokens === undefined))
+    assert.deepEqual(plain.map(c => c.tokens), dual.map(c => c.tokens))
+    assert.throws(() => buildEpubIndex(bytes, { streams: 'other', onBatch: () => {} }))
+})

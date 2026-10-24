@@ -38,12 +38,13 @@ import { SourceSettingsQueryService } from "./source-settings/application/source
 import { UserZlibraryConfigService } from "./source-settings/application/user-zlibrary-config.service";
 import { UserZlibraryConfigRepository } from "./source-settings/infrastructure/user-zlibrary-config.repository";
 import { UserZlibraryConfigController } from "./source-settings/presentation/http/user-zlibrary-config.controller";
+import { safeOutboundHttpConfig } from "../../platform/security/safe-outbound-http";
 
 @Module({
   imports: [
     SqlitePersistenceModule,
     StorageModule,
-    HttpModule,
+    HttpModule.register(safeOutboundHttpConfig()),
     CryptoModule,
     IntelligentLibraryModule,
   ],

@@ -133,7 +133,7 @@ describe("selection QA persistent commands", () => {
       }),
     ).toThrow("CONVERSATION_FROZEN");
     expect(store.conversation(1, first.conversation.id).status).toBe("frozen");
-    expect(store.turn(1, first.turn.id).status).toBe("cancelled");
+    expect(store.turn(1, first.turn.id).status).toBe("failed");
   });
   it("prevents cross-user lookup and active deletion", async () => {
     const first = await create();
@@ -274,7 +274,7 @@ describe("selection QA persistent commands", () => {
       expect(
         await applying.apply(1, first.turn.id, {
           commandId: status,
-          appendText: "user edited",
+          appendText: "user edited", acceptUnverified: true,
           target: {
             kind: "append",
             annotationId: "saved",

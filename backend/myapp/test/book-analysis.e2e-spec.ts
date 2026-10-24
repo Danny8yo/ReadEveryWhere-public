@@ -12,7 +12,7 @@ import { LanguageModelGateway } from "../src/support/ai-model/application/langua
 import type {
   ModelCompletion,
   ModelCompletionRequest,
-} from "../src/modules/ai-reading/application/ports/language-model.port";
+} from "../src/support/ai-model/public";
 import { BOOK_CLASSIFIER_PORT } from "../src/modules/intelligent-library/book-analysis/application/ports/book-classifier.port";
 import { AllExceptionsFilter } from "../src/platform/http/all-exceptions.filter";
 import { SuccessResponseInterceptor } from "../src/platform/http/success-response.interceptor";
@@ -150,6 +150,24 @@ describe("Book Analysis API (e2e)", () => {
     classifier.releaseHeld();
     await app.close();
     rmSync(runRoot, { recursive: true, force: true });
+  });
+
+  it("keeps model settings available and removes the retired autonomous-reading routes", async () => {
+    await request(app.getHttpServer())
+      .get("/api/v1/ai-reading/model-config")
+      .set(sessionHeaders(userToken))
+      .expect(200);
+    for (const path of ["conversations", "budget-config", "tasks"]) {
+      await request(app.getHttpServer())
+        .get(`/api/v1/ai-reading/${path}`)
+        .set(sessionHeaders(userToken))
+        .expect(404);
+    }
+    await request(app.getHttpServer())
+      .post("/api/v1/ai-reading/conversations")
+      .set(sessionHeaders(userToken))
+      .send({ bookId: readyBookId, message: "已下线的自主阅读" })
+      .expect(404);
   });
 
   it("requires authentication and reports not_analyzed before first submission", async () => {
@@ -306,11 +324,11 @@ describe("Book Analysis API (e2e)", () => {
   });
 
   it.each([
-    ["not_analyzed", () => notAnalyzedBookId, "BOOK_ANALYSIS_REQUIRED"],
-    ["pending", () => heldBookId, "BOOK_ANALYSIS_IN_PROGRESS"],
-    ["failed", () => failedBookId, "BOOK_ANALYSIS_FAILED"],
-    ["stale", () => staleBookId, "BOOK_ANALYSIS_REQUIRED"],
-  ] as const)("blocks AI reading when analysis is %s", async (state, bookId, reason) => {
+    ["not_analyzed", () => notAnalyzedBookId],
+    ["pending", () => heldBookId],
+    ["failed", () => failedBookId],
+    ["stale", () => staleBookId],
+  ] as const)("reports analysis state %s", async (state, bookId) => {
     const id = bookId();
     if (state === "pending") {
       await request(app.getHttpServer())
@@ -337,15 +355,8 @@ describe("Book Analysis API (e2e)", () => {
       expect(stale.stale).toBe(true);
     }
 
-    const response = await request(app.getHttpServer())
-      .post("/api/v1/ai-reading/conversations")
-      .set(sessionHeaders(userToken))
-      .send({ bookId: id, message: "验证预分析准入", budgetTier: "quick" })
-      .expect(409);
-    expect(response.body).toMatchObject({
-      code: 40004,
-      details: { reason },
-    });
+    const response = await getAnalysis(app, userToken, id);
+    expect(response.body.data.status).toBe(state);
 
     if (state === "pending") {
       classifier.releaseHeld();
@@ -353,17 +364,7 @@ describe("Book Analysis API (e2e)", () => {
     }
   });
 
-  it("blocks an unconfirmed ready candidate and allows AI reading only after explicit apply", async () => {
-    const blocked = await request(app.getHttpServer())
-      .post("/api/v1/ai-reading/conversations")
-      .set(sessionHeaders(userToken))
-      .send({ bookId: readyBookId, message: "分析关键概念", budgetTier: "quick" })
-      .expect(409);
-    expect(blocked.body).toMatchObject({
-      code: 40004,
-      details: { reason: "BOOK_ANALYSIS_REQUIRED" },
-    });
-
+  it("applies a ready candidate to the formal reading profile only after explicit confirmation", async () => {
     const candidate = await waitForAnalysis(app, userToken, readyBookId, "ready");
     const candidateProfile = candidate.candidate as { id?: unknown } | null;
     expect(candidateProfile?.id).toEqual(expect.any(String));
@@ -386,20 +387,6 @@ describe("Book Analysis API (e2e)", () => {
     expect(library.body.data.bookAnalysis).toMatchObject({
       status: "ready",
       candidateId: null,
-    });
-
-    const response = await request(app.getHttpServer())
-      .post("/api/v1/ai-reading/conversations")
-      .set(sessionHeaders(userToken))
-      .send({ bookId: readyBookId, message: "分析关键概念", budgetTier: "quick" })
-      .expect(201);
-    expect(response.body.data).toMatchObject({
-      bookId: readyBookId,
-      status: "active",
-      contentRevision: expect.any(Object),
-      profileVersion: 2,
-      strategyVersion: null,
-      turns: [expect.objectContaining({ status: "queued" })],
     });
   });
 });

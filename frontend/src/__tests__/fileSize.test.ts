@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { formatFileSize } from '../utils/fileSize';
+import { formatFileSize } from '../shared/utils/fileSize';
 
 describe('formatFileSize', () => {
   it.each([

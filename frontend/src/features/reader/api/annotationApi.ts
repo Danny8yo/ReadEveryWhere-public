@@ -1,5 +1,5 @@
 import type { AnnotationType, Annotation, CreateAnnotationParams, UpdateAnnotationParams } from '../model/annotation';
-import { request } from "../../../services/apiClient";
+import { request } from "../../../shared/web/apiClient";
 export const createAnnotation = (params: CreateAnnotationParams): Promise<Annotation> => {
     return request<Annotation>("/api/v1/annotations", {
         method: "POST",

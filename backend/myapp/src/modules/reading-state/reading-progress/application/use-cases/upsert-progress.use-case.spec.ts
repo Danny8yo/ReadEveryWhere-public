@@ -2,6 +2,7 @@ import { UpsertProgressUseCase } from "./upsert-progress.use-case";
 import type { BookOwnershipPort } from "../../../../intelligent-library/public";
 import type { ReadingProgressRepositoryPort } from "../ports/reading-progress-repository.port";
 
+// C9 编号对应 doc/同步测试用例审查.md
 describe("UpsertProgressUseCase", () => {
   let useCase: UpsertProgressUseCase;
   const mockRepo = {
@@ -67,8 +68,14 @@ describe("UpsertProgressUseCase", () => {
     expect(mockRepo.upsert).not.toHaveBeenCalled();
   });
 
-  it("does not publish a change when the repository rejects an old device sequence", () => {
-    const changes = { transact: jest.fn((_input, mutation) => mutation().value) };
+  it("C9 同一设备发来设备序号更小的进度 → 拒绝，进度不倒退，也不通知其他设备", () => {
+    let mutationResult: { value: unknown; didChange: boolean; bookId: number | null } | undefined;
+    const changes = {
+      transact: jest.fn((_input, mutation) => {
+        mutationResult = mutation();
+        return mutationResult!.value;
+      }),
+    };
     mockRepo.upsert.mockReturnValue({
       changed: false,
       progress: { bookId: 7, deviceId: "dev-1", deviceSequence: 4, revision: 4 },
@@ -82,6 +89,7 @@ describe("UpsertProgressUseCase", () => {
     const result = useCase.execute(3, { ...baseInput, deviceSequence: 3, fraction: 0.5 });
     expect(result.deviceSequence).toBe(4);
     expect(changes.transact).toHaveBeenCalledTimes(1);
-    expect(changes.transact.mock.results[0]?.value).toBe(result);
+    // 协调器只在 didChange 为 true 时推进版本号并通知（见 C5）。
+    expect(mutationResult).toMatchObject({ didChange: false, bookId: 7 });
   });
 });

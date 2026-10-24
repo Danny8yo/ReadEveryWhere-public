@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { getBookFormat, getBookFormatLabel, getBookFormatMimeType } from '../utils/bookFormat';
+import { getBookFormat, getBookFormatLabel, getBookFormatMimeType } from '../shared/utils/bookFormat';
 
 describe('bookFormat', () => {
   it('detects PDF and EPUB from MIME types', () => {

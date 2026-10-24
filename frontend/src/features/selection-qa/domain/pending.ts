@@ -86,7 +86,9 @@ export function decodePending(
       fail();
   } else if (command.kind === "apply") {
     keys(command, ["kind", "turnId", "body"]);
-    keys(body, ["commandId", "appendText", "target"]);
+    keys(body, ["commandId", "appendText", "target"], ["answerVersion", "acceptUnverified"]);
+    if (body.answerVersion !== undefined && (!Number.isSafeInteger(body.answerVersion) || Number(body.answerVersion) < 0)) fail();
+    if (body.acceptUnverified !== undefined && typeof body.acceptUnverified !== "boolean") fail();
     if (!text(command.turnId, 128) || !text(body.appendText, 50000)) fail();
     const target = object(body.target);
     if (target.kind === "append") {

@@ -1,5 +1,5 @@
 import type { SourcePlatform, SearchAvailability } from '../model/book';
-import type { EbookFormat } from '../../../utils/bookFormat';
+import type { EbookFormat } from '../../../shared/utils/bookFormat';
 export interface SearchApiBook {
     id: string | number;
     sourceBookId?: string | number | null;

@@ -49,6 +49,8 @@ export interface Turn {
   turnNumber: number;
   question: string;
   answer: string;
+  answerVersion?: number;
+  quality?: import("./selection-qa-runtime.port").QaQualityJudgment;
   status:
     "queued" | "running" | "completed" | "cancelled" | "failed" | "timed_out";
   errorCode: string | null;
@@ -63,7 +65,7 @@ export interface Turn {
 }
 export type CommandResult = { conversation: Conversation; turn: Turn } | Turn;
 export interface SelectionQaEvent {
-  schemaVersion: 1;
+  schemaVersion: 1 | 2;
   turnId: string;
   sequence: number;
   kind: "status" | "answer_delta" | "citation" | "terminal";

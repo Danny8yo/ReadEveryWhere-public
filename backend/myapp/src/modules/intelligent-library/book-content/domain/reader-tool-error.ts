@@ -1,4 +1,5 @@
 export type ReaderToolErrorCode =
+  | "CONTENT_CANCELLED"
   | "BOOK_NOT_FOUND"
   | "BOOK_FILE_MISSING"
   | "UNSUPPORTED_FORMAT"
@@ -22,6 +23,7 @@ export type ReaderToolErrorCode =
   | "INDEX_DEADLINE";
 
 const HTTP_CODE_BY_REASON: Record<ReaderToolErrorCode, { status: number; code: number }> = {
+  CONTENT_CANCELLED: { status: 409, code: 40916 },
   BOOK_NOT_FOUND: { status: 404, code: 40411 },
   BOOK_FILE_MISSING: { status: 409, code: 40911 },
   UNSUPPORTED_FORMAT: { status: 415, code: 41511 },

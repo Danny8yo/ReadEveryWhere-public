@@ -22,15 +22,17 @@ npm run fixtures
 ## 出口与约束
 
 - 包根：`parseChapter`、紧凑 `buildSourceMap`、双向范围转换、`resolveSelection`、`canonicalOffsetAtElement`；DOM 由宿主传入，不访问 ZIP/网络、不执行脚本。
-- `/types`：不依赖 DOM 的纯数据声明；`/node`：`parseEpub`、`resolveEpubSelection` 和 Node Port 类型。前端不要引入 Node 出口。
+- `/types`：不依赖DOM的纯数据声明；`/node`：`parseEpub`、`resolveEpubSelection`、`readEpubRanges`及Node Port类型。前端不要引入Node出口。
 - `/foliate/epub.js`、`/foliate/epubcfi.js`：原仓库同版本引擎子集，唯一源码，无旧路径兼容副本。
 - `/decode`：按媒体类型对 XML/HTML/CSS 编码声明做有限 prescan，BOM优先（不声称完整浏览器sniff），UTF32/非法bytes或label拒绝；Node ZIP、Web ZIP/目录与章节加载采用相同入口。
 - Node 在 jsdom 默认禁止脚本/资源加载的独立 worker 中解压与解析。交互 lane 单并发、最多 8 排队；超时从提交时计算，排队 abort 即刻移除，终止 worker 完成后释放槽位。默认 30 秒，worker old-generation 上限 384 MiB，不是整进程 RSS 保证。
 - ZIP 只在内存读取，维持原 5000 条目/单条目解压 50 MiB/总解压 200 MiB 上限；拒绝危险路径、重复路径、大小不一致、缺失 spine 资源。没有新增压缩输入 50 MiB 限制。资源不落盘、不请求网络。
 - `resolveEpubSelection(bytes, expectedScope, request)` 接受源节点范围或完整书籍 CFI，校验实际文件 SHA-256、物理 spine/规范 href、版本与精确 displayedQuote，返回 canonicalQuote 和范围；不搜索 quote，不跨版本恢复。调用方必须先取得当前 artifact 的权威归属/版本 scope；该函数不能代替用户授权，也不能代替写批注事务内版本 fencing。
-- worker 错误传递 `{ name, code, message }`，保留稳定定位错误码，不向消费者传堆栈。P1 不新增 HTTP 问答接口、持久化 source map 或数据库结构。
+- worker错误传递 `{name,code,message}`，保留稳定定位错误码，不向消费者传堆栈。共享包不拥有问答HTTP、持久化source map或业务数据库结构。
 
 ## 规范化版本
+
+`readEpubRanges(bytes,scope,ranges,options)`按规范section/href/start/end读取，最多100范围、累计50000字符，仅解析目标章节并返回candidates/unavailable。规范端点经source map转换为完整CFI及真实DOM displayedQuote；BookContent再经replay与BookDocument核对。无法表示的章首/末合成字符不导致整章丢失：保留可表示内部范围，两边精确记录UNREPRESENTABLE_RANGE；若无可表示正文则完整缺口，不越出请求范围。规范quote与raw quote分别保存，不能互相替代；强读投影不改变规范化版本、旧CFI或批注。测试覆盖两边图片alt/分隔符、范围长度守恒、精确CFI回放及伪href拒绝。
 
 当前 `epub-source-map-v2`，生产提取器 `epub-extractor-v5`。NFC 跨 inline 节点；普通空白折叠；块间单换行，含表格单元格；pre/code 保留原空白；图片 alt/块分隔为合成文本；排除 script/style 等。旧 `epub-text-v1` 正文偏移不可混用，新 revision 自然隔离旧缓存/引用；旧批注 CFI 与数据不改写。
 
@@ -53,6 +55,8 @@ source map 用 Uint32 列式记录和同节点恒等区间压缩，特殊 NFC/�
 位置分词版本为 `rew-keywords-v4-han-unigram-tech2-boundary1-unicode<运行Unicode版本>`。NFC/lowercase后逐汉字码点输出，不使用Intl、领域词典、bigram或停词删除；保留重复出现、标点/空白分隔位置。拉丁技术词如I/O、C++、C++17、Node.js、UTF-8保持原子，UTF8 hex防止底层unicode61再次拆分技术符号。Unicode数据版本入索引身份；不再使用Intl词典，因此不因ICU词切分变化而失效。
 
 `prepareKeywordQueries`每个内层字符串代表一个有序短语，内部token以空格连接且不去重。输入字符串的空白分隔完整词面，每条最多128 UTF-16、16个词面，最多4条/共512 UTF-16；已移除96唯一token限制。相同完整词面可去重。词面由调用方提供，核心不从完整自然句推断术语。`tokenizeKeywords(text,isQuery)`保留签名，索引/查询输出相同的位置流。
+
+双路召回流（`dual-v1`，由 `buildEpubIndex(bytes,{streams:"dual"})` 在索引 worker 内产生）：每块在 v4 `tokens` 之外增加 `bigramTokens`（`tokenizeBigrams`：汉字连续段滑窗二元组，分隔符截断，单字段输出该字，技术词原子，前缀 `b`）与 `wordTokens`（`tokenizeWords(text,"index")`：jieba 搜索模式，HMM 关，技术词绕过 jieba，前缀 `w`）。依赖固定为 `@node-rs/jieba@2.0.3`（含 linux-*-musl 预编译包），词典 sha256 写死在 `DUAL_TOKENIZER_VERSION` 中，加载时不符即抛 `TOKENIZER_MISMATCH`；jieba 懒加载，回放/上下文 worker 不加载词典。`planDualQueries(queries, informationNeed?)` 是确定性的召回计划：沿用 `prepareKeywordQueries` 的校验，按词面生成 char/bigram_phrase/bigram_soft/word_query/word_need 列表及固定权重 `DUAL_LIST_WEIGHTS`；查询词路去除 `WORD_STOPWORDS`，其哈希进入 `DUAL_QUERY_POLICY_VERSION`。
 
 查询策略 `phrase-or-bm25-v1` 在单书单代FTS中组合完整短语；正式默认等权OR，查询期可对照权重与最少匹配词面数。它们不影响索引身份。发布、恢复和范围重叠去重见 [BookContent](../../backend/map/30-intelligent-library/book-content.md)。位置正确性不等于语义相关性，尚未宣称中文问答质量全面解决。
 

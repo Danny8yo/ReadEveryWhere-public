@@ -41,6 +41,9 @@ export function createQaState() {
       annotations: Annotation[];
       originalCfi: string;
       conflict: boolean;
+      answerVersion?: number;
+      requiresUnverifiedConfirmation?: boolean;
+      acceptUnverified?: boolean;
     } | null,
   };
 }
@@ -381,6 +384,9 @@ export function createQaController(
         annotations,
         originalCfi,
         conflict: false,
+        answerVersion: turn.answerVersion,
+        requiresUnverifiedConfirmation: turn.status !== "completed",
+        acceptUnverified: false,
       };
     });
   }
@@ -392,6 +398,9 @@ export function createQaController(
       if (!draft.text.trim() || draft.text.length > 50000)
         throw new Error("追加文字不能为空，且最多 50000 字符。");
       if (draft.conflict) throw new Error("请核对最新原批注，并明确重新确认。");
+      const turn = state.turns.find(t => t.id === draft.turnId);
+      if (!turn || isActive(turn) || turn.answerVersion !== draft.answerVersion) throw new Error("回答版本已变化，请重新预览。");
+      if (draft.requiresUnverifiedConfirmation && draft.acceptUnverified !== true) throw new Error("请明确确认此回答尚未完成或核验。");
       const target: ApplyTarget =
         draft.targetId === "new"
           ? {
@@ -415,7 +424,10 @@ export function createQaController(
       setPending({
         kind: "apply",
         turnId: draft.turnId,
-        body: { commandId: host.commandId(), appendText: draft.text, target },
+        body: { commandId: host.commandId(), appendText: draft.text, target,
+          ...(draft.answerVersion !== undefined ? { answerVersion: draft.answerVersion } : {}),
+          ...(draft.requiresUnverifiedConfirmation ? { acceptUnverified: true } : {}),
+        },
       });
       await executePending();
     });

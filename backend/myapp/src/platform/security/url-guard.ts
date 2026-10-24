@@ -1,5 +1,35 @@
-import { isIP } from "node:net";
+import { BlockList, isIP } from "node:net";
 import { AppException } from "../http/app-exception";
+
+// 本机、内网、链路本地（含云元数据 169.254.169.254）、CGNAT、文档网段、组播与保留网段。
+// IPv4-mapped（::ffff:a.b.c.d，含 URL 规范化后的 ::ffff:7f00:1 写法）由 BlockList 按 IPv4 规则匹配。
+// 不含 198.18.0.0/15：Clash/Surge 等代理的 fake-ip DNS 把所有域名解析到这个段，拦截会让
+// 部署在这类网络里的实例无法访问任何上游；该段本身不是内网。
+const BLOCKED_ADDRESSES = new BlockList();
+for (const [network, prefix] of [
+  ["0.0.0.0", 8], ["10.0.0.0", 8], ["100.64.0.0", 10], ["127.0.0.0", 8],
+  ["169.254.0.0", 16], ["172.16.0.0", 12], ["192.0.0.0", 24], ["192.0.2.0", 24],
+  ["192.168.0.0", 16], ["198.51.100.0", 24], ["203.0.113.0", 24],
+  ["224.0.0.0", 4], ["240.0.0.0", 4],
+] as const) {
+  BLOCKED_ADDRESSES.addSubnet(network, prefix, "ipv4");
+}
+for (const [network, prefix] of [
+  // ::/96 同时覆盖 ::、::1 与已废弃的 IPv4-compatible（::7f00:1）。
+  ["::", 96], ["64:ff9b::", 96], ["64:ff9b:1::", 48], ["100::", 64],
+  ["2001:db8::", 32], ["fc00::", 7], ["fe80::", 10], ["fec0::", 10], ["ff00::", 8],
+] as const) {
+  BLOCKED_ADDRESSES.addSubnet(network, prefix, "ipv6");
+}
+
+/** 判断一个 IP 字面量是否落在禁止外发的网段；非 IP 字符串一律视为禁止。 */
+export function isBlockedAddress(address: string): boolean {
+  const ip = normalizeHostname(address);
+  const version = isIP(ip);
+  if (version === 4) return BLOCKED_ADDRESSES.check(ip, "ipv4");
+  if (version === 6) return BLOCKED_ADDRESSES.check(ip, "ipv6");
+  return true;
+}
 
 /**
  * SSRF 防护：校验「目标地址来自用户输入」的外发 URL 是否安全。
@@ -10,9 +40,8 @@ import { AppException } from "../http/app-exception";
  * - 拒绝指向本机 / 内网 / 链路本地 / 云元数据等保留网段的 IP 字面量。
  * - 拒绝 localhost 等明显的本机主机名。
  *
- * 已知限制：本函数为「写入时」的同步校验，无法防御 DNS rebinding
- * （域名在请求时才解析到内网 IP）。如需更强防护，应在 HTTP 请求层
- * 对解析后的 IP 再做一次拦截（后续可加 axios lookup 钩子）。
+ * 本函数只是「写入时」的早期校验，用于给出明确的校验错误；域名解析到内网、
+ * DNS rebinding 与重定向由 safe-outbound-http 的连接层 Agent 兜底拦截。
  */
 export function assertSafeOutboundUrl(
   rawUrl: string,
@@ -46,11 +75,7 @@ export function assertSafeOutboundUrl(
     throw AppException.validation(field, "URL host is not allowed");
   }
 
-  const ipVersion = isIP(hostname);
-  if (ipVersion === 4 && isPrivateIPv4(hostname)) {
-    throw AppException.validation(field, "URL host points to a private/reserved address");
-  }
-  if (ipVersion === 6 && isPrivateIPv6(hostname)) {
+  if (isIP(hostname) && isBlockedAddress(hostname)) {
     throw AppException.validation(field, "URL host points to a private/reserved address");
   }
 
@@ -71,38 +96,5 @@ function isBlockedHostname(hostname: string): boolean {
   if (hostname === "localhost") return true;
   // 任意以 .localhost / .local / .internal 结尾的本地/内网域名
   if (/\.(localhost|local|internal)$/.test(hostname)) return true;
-  return false;
-}
-
-function isPrivateIPv4(ip: string): boolean {
-  const parts = ip.split(".").map((p) => Number(p));
-  if (parts.length !== 4 || parts.some((n) => !Number.isInteger(n) || n < 0 || n > 255)) {
-    // 不是规范的 IPv4，交给上层当作主机名处理；这里保守地不放行
-    return true;
-  }
-  const [a, b] = parts;
-  if (a === 0) return true; // 0.0.0.0/8
-  if (a === 10) return true; // 10.0.0.0/8 私有
-  if (a === 127) return true; // 127.0.0.0/8 回环
-  if (a === 169 && b === 254) return true; // 169.254.0.0/16 链路本地（含云元数据 169.254.169.254）
-  if (a === 172 && b >= 16 && b <= 31) return true; // 172.16.0.0/12 私有
-  if (a === 192 && b === 168) return true; // 192.168.0.0/16 私有
-  if (a === 100 && b >= 64 && b <= 127) return true; // 100.64.0.0/10 CGNAT
-  if (a === 192 && b === 0) return true; // 192.0.0.0/24 等保留
-  if (a === 198 && (b === 18 || b === 19)) return true; // 198.18.0.0/15 基准测试
-  if (a >= 224) return true; // 224.0.0.0/4 组播 + 240.0.0.0/4 保留
-  return false;
-}
-
-function isPrivateIPv6(ip: string): boolean {
-  const lower = ip.toLowerCase();
-  if (lower === "::1" || lower === "::") return true; // 回环 / 未指定
-  // IPv4-mapped（::ffff:a.b.c.d）：提取内嵌 IPv4 再判断
-  const mapped = lower.match(/^::ffff:(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})$/);
-  if (mapped) return isPrivateIPv4(mapped[1]);
-  if (lower.startsWith("fc") || lower.startsWith("fd")) return true; // fc00::/7 唯一本地
-  if (lower.startsWith("fe80") || lower.startsWith("fe9") || lower.startsWith("fea") || lower.startsWith("feb")) {
-    return true; // fe80::/10 链路本地
-  }
   return false;
 }

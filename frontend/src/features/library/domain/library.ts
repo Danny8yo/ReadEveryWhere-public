@@ -1,6 +1,6 @@
 import type { AddBookManualParams, LibraryBook } from "../model/library";
-import type { ViewMode } from "../../../types/library";
-import type { EbookFormat } from "../../../utils/bookFormat";
+import type { ViewMode } from "../model/viewMode";
+import type { EbookFormat } from "../../../shared/utils/bookFormat";
 export type LoadLibraryParams = {
   page?: number;
   pageSize?: number;
@@ -60,6 +60,8 @@ export function createLibraryController<FileInput>(
 ) {
   let loadGeneration = 0;
   let disposed = false;
+  // 写入成功后列表还没刷新成功时，刷新失败要说明写入已成功，避免误报失败、诱导重复提交。
+  let writeAwaitingRefresh = false;
   // API uses numeric IDs
   // 视图切换
   const setViewMode = (mode: ViewMode) => {
@@ -101,6 +103,7 @@ export function createLibraryController<FileInput>(
         );
         return;
       }
+      writeAwaitingRefresh = false;
       state.error = null;
       state.books = data.items;
       state.pagination = {
@@ -113,8 +116,12 @@ export function createLibraryController<FileInput>(
         state.selectedBookIds = []; // 加载新数据时清空选中
       }
     } catch (e: any) {
-      if (!disposed && token === loadGeneration)
-        state.error = e.message || "加载书架失败";
+      if (!disposed && token === loadGeneration) {
+        const reason = e.message || "加载书架失败";
+        state.error = writeAwaitingRefresh
+          ? `操作成功，列表更新失败：${reason}`
+          : options.force ? `列表更新失败：${reason}` : reason; // force 即用户手动刷新
+      }
       throw e;
     } finally {
       if (!disposed && token === loadGeneration && !options.silent) {
@@ -127,6 +134,7 @@ export function createLibraryController<FileInput>(
     state.error = null;
     try {
       await api.importBook(params);
+      writeAwaitingRefresh = true;
       api.invalidate?.();
     } catch (e: any) {
       api.invalidate?.();
@@ -141,6 +149,7 @@ export function createLibraryController<FileInput>(
     state.error = null;
     try {
       await api.addBookManual(params);
+      writeAwaitingRefresh = true;
       api.invalidate?.(); // 写入和查询错误分别呈现
     } catch (e: any) {
       api.invalidate?.();
@@ -203,6 +212,7 @@ export function createLibraryController<FileInput>(
           .filter((book): book is LibraryBook => !!book)
           .map((book) => ({ userId: book.userId, bookId: book.id })),
       );
+      writeAwaitingRefresh = true;
       api.invalidate?.(); // 写入和查询错误分别呈现
     } catch (e: any) {
       api.invalidate?.();
@@ -232,7 +242,7 @@ export function createLibraryController<FileInput>(
         publishYear,
         editionTag,
       } = newData;
-      await api.updateLibraryBook(id, {
+      const updated = await api.updateLibraryBook(id, {
         title,
         authors,
         isbn,
@@ -243,7 +253,10 @@ export function createLibraryController<FileInput>(
         publishYear,
         editionTag,
       });
+      writeAwaitingRefresh = true;
       api.invalidate?.(); // 写入和查询错误分别呈现
+      // 返回服务端确认后的书：书架列表要等重新查询才更新，详情等打开中的视图直接用它
+      return updated;
     } catch (e: any) {
       api.invalidate?.();
       state.error = e.message || "保存失败";
@@ -256,6 +269,11 @@ export function createLibraryController<FileInput>(
     disposed = true;
     loadGeneration++;
   }
+  // 列表经其他途径（缓存自动刷新）更新时，同样以此判断和清除"写入待刷新"。
+  const hasUnrefreshedWrite = () => writeAwaitingRefresh;
+  const listRefreshed = () => {
+    writeAwaitingRefresh = false;
+  };
   return {
     setViewMode,
     loadLibrary,
@@ -266,6 +284,8 @@ export function createLibraryController<FileInput>(
     clearSelection,
     deleteBooks,
     updateBookMetadata,
+    hasUnrefreshedWrite,
+    listRefreshed,
     dispose,
   };
 }

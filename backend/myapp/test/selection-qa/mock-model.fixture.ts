@@ -23,6 +23,8 @@ export interface MockScenario {
   hold?: Promise<void>;
   fakeCitation?: boolean;
   onStream?: () => void;
+  checkDelayMs?: number;
+  reviseFirst?: boolean;
 }
 /** Test-only provider. It cannot contact a model endpoint and contains no credentials. */
 export class ScriptedQaModel implements QaModelPort {
@@ -30,9 +32,13 @@ export class ScriptedQaModel implements QaModelPort {
     [];
   scenario: MockScenario = {};
   private plan = 0;
+  private checks = 0;
+  private streams = 0;
   use(scenario: MockScenario = {}) {
     this.scenario = scenario;
     this.plan = 0;
+    this.checks = 0;
+    this.streams = 0;
     this.calls.length = 0;
   }
   snapshot(): QaModelSnapshot {
@@ -59,8 +65,16 @@ export class ScriptedQaModel implements QaModelPort {
   ) {
     input.signal.throwIfAborted();
     this.calls.push({ kind: "complete", input });
+    if (input.tools?.some(t => t.function.name === "assess_answer")) {
+      if(this.scenario.checkDelayMs) await abortable(new Promise<void>(r=>setTimeout(r,this.scenario.checkDelayMs)),input.signal);
+      const revise=this.scenario.reviseFirst && this.checks++===0;
+      return { usage, toolCalls: [{ id: "assessment", name: "assess_answer", arguments: revise?JSON.stringify({verdict:"revise",issues:[{claim:"任何场景",problem:"遗漏关键前提",evidenceIds:[],action:"修订为允许陈旧数据的范围"}]}):'{"verdict":"pass","issues":[]}' }] };
+    }
     const calls = this.scenario.plans?.[this.plan++] ?? [];
-    return { toolCalls: calls.length ? calls : finishPlan(input), usage };
+    const envelope = JSON.parse(input.messages[input.messages.length - 1].content!);
+    const scriptedContext = !this.scenario.plans && envelope.VERIFIED_EVIDENCE.length === 0
+      ? [{ id: "selection", name: "read_selection_context", arguments: "{}" }] : finishPlan(input);
+    return { toolCalls: calls.length ? calls : scriptedContext, usage };
   }
   async stream(
     _user: number,
@@ -70,7 +84,8 @@ export class ScriptedQaModel implements QaModelPort {
   ) {
     this.calls.push({ kind: "stream", input });
     input.signal.throwIfAborted();
-    for (const chunk of this.scenario.chunks ?? [this.scenario.answer ??
+    const revision=this.streams++;
+    for (const chunk of this.scenario.chunks ?? [this.scenario.reviseFirst?(revision===0?"初稿：缓存适用于任何场景。":"修订：缓存读取需允许陈旧数据；强一致应读取权威源。"):this.scenario.answer ??
       (this.scenario.plans?.length ? transferAnswer : cacheAnswer)]) {
       await onDelta(chunk);
       if (this.scenario.chunkDelayMs) await abortable(new Promise<void>(r => setTimeout(r, this.scenario.chunkDelayMs)), input.signal);
@@ -84,10 +99,8 @@ export class ScriptedQaModel implements QaModelPort {
         new Promise<void>((r) => setTimeout(r, this.scenario.delayMs)),
         input.signal,
       );
-    const contents = input.messages.map((m) => m.content ?? "").join("\n");
-    const ids = [...contents.matchAll(/"evidenceId"\s*:\s*"([^\"]+)"/g)].map(
-      (match) => match[1],
-    );
+    const envelope = JSON.parse(input.messages[input.messages.length - 1].content!);
+    const ids = envelope.VERIFIED_EVIDENCE.map((e: { evidenceId: string }) => e.evidenceId);
     const evidenceId = this.scenario.plans?.length
       ? ids[ids.length - 1]
       : ids[0];

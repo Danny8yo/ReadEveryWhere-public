@@ -23,6 +23,14 @@ export interface ZlibrarySettingsProjection {
   loginStatus: "pending" | "success" | "failed";
 }
 
+export interface ZlibraryProbeProjection {
+  baseUrl: string;
+  category: string;
+  status: number | null;
+  diagnostic: unknown;
+  checkedAt: string;
+}
+
 export class UserZlibraryConfigService {
   constructor(
     private readonly login: SourceLoginPort,
@@ -31,6 +39,7 @@ export class UserZlibraryConfigService {
   ) {}
 
   async save(userId: number, input: SaveZlibrarySettingsInput): Promise<ZlibrarySettingsProjection> {
+    await this.requireReachable(input.baseUrl);
     const login = await this.login.loginWithCredentials(input.email, input.password, input.baseUrl);
     return this.saveValidatedCredentials(userId, input.baseUrl, login);
   }
@@ -39,6 +48,7 @@ export class UserZlibraryConfigService {
     userId: number,
     input: ImportZlibraryCookiesInput,
   ): Promise<ZlibrarySettingsProjection> {
+    await this.requireReachable(input.baseUrl);
     const login = await this.login.validateCookies(
       input.remixUserid,
       input.remixUserkey,
@@ -67,9 +77,34 @@ export class UserZlibraryConfigService {
     return projectSettings(saved, baseUrl);
   }
 
-  updateBaseUrl(userId: number, baseUrl: string): { baseUrl: string } {
+  async probe(baseUrl: string): Promise<ZlibraryProbeProjection> {
+    if (!this.login.probe) throw new Error("ZLIBRARY_PROBE_UNAVAILABLE");
+    const result = await this.login.probe(baseUrl);
+    return { baseUrl, ...result, checkedAt: new Date().toISOString() };
+  }
+
+  async discoverDomains(bootstrapUrl: string) {
+    if (!this.login.discoverDomains) throw new Error("ZLIBRARY_DISCOVERY_UNAVAILABLE");
+    return this.login.discoverDomains(bootstrapUrl);
+  }
+
+  async updateBaseUrl(userId: number, baseUrl: string): Promise<{ baseUrl: string }> {
+    await this.requireReachable(baseUrl);
+    const existing = this.store.findByUserId(userId);
+    if (!existing || existing.loginStatus !== "success" || !existing.remixUserid || !existing.remixUserkey) {
+      throw new Error("ZLIBRARY_CREDENTIALS_REQUIRED_FOR_BASE_URL");
+    }
+    await this.login.validateCookies(existing.remixUserid, existing.remixUserkey, baseUrl);
     this.store.updateBaseUrl(userId, baseUrl);
     return { baseUrl };
+  }
+
+  private async requireReachable(baseUrl: string): Promise<void> {
+    if (!this.login.probe) return;
+    const result = await this.probe(baseUrl);
+    if (result.category !== "API_REACHABLE") {
+      throw new Error(`ZLIBRARY_PROBE_FAILED:${result.category}`);
+    }
   }
 
   get(userId: number): ZlibrarySettingsProjection {

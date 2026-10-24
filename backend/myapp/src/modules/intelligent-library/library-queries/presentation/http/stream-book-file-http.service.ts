@@ -2,6 +2,7 @@ import { Injectable } from "@nestjs/common";
 import { Request, Response } from "express";
 import * as fs from "node:fs";
 import type { BookFileStreamingQueryPort } from "../../../catalog/application/ports/book-file-streaming-query.port";
+import { EBOOK_FORMAT_MIME_TYPES } from "../../../public/ebook-format";
 
 /**
  * 书籍文件是私有内容，只允许存进浏览器自己的缓存，不能进任何共享缓存。
@@ -12,6 +13,16 @@ import type { BookFileStreamingQueryPort } from "../../../catalog/application/po
  */
 const PRIVATE_FILE_CACHE_CONTROL = "private, max-age=3600";
 const EXPOSED_FILE_HEADERS = "Accept-Ranges, Content-Length, Content-Range, Cache-Control, ETag, Last-Modified";
+const SERVABLE_MIME_TYPES = new Set(Object.values(EBOOK_FORMAT_MIME_TYPES));
+/**
+ * 文件路由与站点同源，且 /file 只凭签名 URL 即可访问。即使库里存在历史遗留的错误 MIME，
+ * 也只按电子书类型下发；直接打开时以 sandbox 文档渲染（无脚本、不透明源），
+ * 防止文件被当作 HTML/脚本在站点源下执行。阅读器用 fetch 读取字节，不受这两个头影响。
+ */
+const FILE_SECURITY_HEADERS = {
+  "Content-Security-Policy": "sandbox; default-src 'none'",
+  "X-Content-Type-Options": "nosniff",
+};
 
 @Injectable()
 export class StreamBookFileHttpService {
@@ -48,7 +59,9 @@ export class StreamBookFileHttpService {
     // 唯一标识内容，可以当强校验器用，从而支持 If-Range。
     const etag = `"${fileSize.toString(16)}-${Math.floor(stat.mtimeMs).toString(16)}"`;
     const lastModified = stat.mtime.toUTCString();
-    const mimeType = row.mimeType || "application/octet-stream";
+    const mimeType = row.mimeType && SERVABLE_MIME_TYPES.has(row.mimeType)
+      ? row.mimeType
+      : "application/octet-stream";
     const validatorHeaders = {
       ETag: etag,
       "Last-Modified": lastModified,
@@ -57,6 +70,7 @@ export class StreamBookFileHttpService {
     };
     const baseHeaders = {
       ...validatorHeaders,
+      ...FILE_SECURITY_HEADERS,
       "Accept-Ranges": "bytes",
       "Content-Type": mimeType,
     };
@@ -116,6 +130,9 @@ export class StreamBookFileHttpService {
       }
       res.status(404).json({ code: 40403, message: "Physical book file not found on disk" });
     });
+    // pipe 不会在客户端中途断开时关闭源文件；pdf.js 取消 Range 请求、断网都会走到这里，
+    // 不显式销毁就会每次泄漏一个文件描述符，最终 EMFILE 拖垮整个服务。
+    res.once("close", () => file.destroy());
     file.pipe(res);
   }
 }

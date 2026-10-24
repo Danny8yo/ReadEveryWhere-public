@@ -3,13 +3,15 @@ export type IdentityApplicationErrorKind =
   | "conflict"
   | "unauthorized"
   | "forbidden"
-  | "not_found";
+  | "not_found"
+  | "rate_limited";
 
 export class IdentityApplicationError extends Error {
   constructor(
     public readonly kind: IdentityApplicationErrorKind,
     message: string,
     public readonly field: string | null = null,
+    public readonly retryAfterSeconds: number | null = null,
   ) {
     super(message);
     this.name = "IdentityApplicationError";
@@ -33,5 +35,9 @@ export class IdentityApplicationError extends Error {
 
   static notFound(field: string | null, message: string): IdentityApplicationError {
     return new IdentityApplicationError("not_found", message, field);
+  }
+
+  static rateLimited(message: string, retryAfterSeconds: number): IdentityApplicationError {
+    return new IdentityApplicationError("rate_limited", message, null, retryAfterSeconds);
   }
 }

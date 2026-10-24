@@ -2,9 +2,28 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import AdmZip from 'adm-zip'
 import { openEpubArchive, safeArchivePath } from '../src/node-zip.js'
-import { parseEpub } from '../src/node.js'
+import { parseEpub, readEpubRanges, replayEpubRanges } from '../src/node.js'
 import { resourcesFor, fixtures } from './fixtures.mjs'
 const archive = resources => { const zip = new AdmZip(); for (const [name,text] of Object.entries(resources)) zip.addFile(name,Buffer.from(text)); return zip.toBuffer() }
+test('structured ranges retain real text next to unmappable image boundaries and replay exactly', async () => {
+    const { createHash } = await import('node:crypto')
+    const { NORMALIZATION_VERSION, EPUB_EXTRACTOR_VERSION } = await import('../src/index.js')
+    const fixture = { source:'<html xmlns="http://www.w3.org/1999/xhtml"><head/><body><img alt="封面"/><p>真实正文。</p><img alt="末图"/></body></html>', mediaType:'application/xhtml+xml' }
+    const bytes = archive(resourcesFor(fixture))
+    const document = await parseEpub(bytes)
+    const scope = { bookId:1,fileChecksum:`sha256:${createHash('sha256').update(bytes).digest('hex')}`,extractorVersion:EPUB_EXTRACTOR_VERSION,normalizationVersion:NORMALIZATION_VERSION }
+    const input = { sectionIndex:0,href:'OPS/chapter.xhtml',start:0,end:document.sections[0].text.length }
+    const result = await readEpubRanges(bytes,scope,[input])
+    assert.equal(result.candidates.length,1)
+    assert.equal(result.candidates[0].quote,'真实正文。')
+    assert.equal(result.unavailable.length,2)
+    assert.equal(result.candidates[0].quote.length + result.unavailable.reduce((n,g)=>n+g.end-g.start,0),input.end)
+    const replay = await replayEpubRanges(bytes,scope,result.candidates)
+    assert.equal(replay[0].cfi,result.candidates[0].cfi)
+    assert.equal(replay[0].displayedQuote,'真实正文。')
+    const invalid = {...input,href:'forged.xhtml'}
+    await assert.rejects(readEpubRanges(bytes,scope,[invalid]),/SCOPE_MISMATCH/)
+})
 test('archive paths reject traversal and external resources', () => {
     for (const path of ['../a', '/a', 'a/../b', 'https://example.org/a', 'a\\b', 'a\0b']) assert.throws(()=>safeArchivePath(path), /Unsafe/)
 })

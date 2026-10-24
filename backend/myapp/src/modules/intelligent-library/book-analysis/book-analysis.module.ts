@@ -34,8 +34,6 @@ import { BookAnalysisSourceAdapter } from "./infrastructure/book-analysis-source
 import { BookAnalysisSummaryProjector } from "./infrastructure/book-analysis-summary.projector";
 import { BookAnalysisWorker } from "./infrastructure/book-analysis.worker";
 import { ApplyBookAnalysisCandidateUseCase } from "./application/use-cases/apply-book-analysis-candidate.use-case";
-import { BookReadingProfileAccessService } from "./application/book-reading-profile-access.service";
-import { CatalogBookReadingProfileAdapter } from "../catalog/infrastructure/catalog-book-reading-profile.adapter";
 import {
   APPLY_BOOK_READING_PROFILE_CANDIDATE_PORT,
   type ApplyBookReadingProfileCandidatePort,
@@ -149,21 +147,6 @@ export { BOOK_ANALYSIS_STRATEGY_VERSION } from "./book-analysis.config";
       ),
     },
     {
-      provide: BookReadingProfileAccessService,
-      inject: [CatalogBookReadingProfileAdapter, BookAnalysisSourceAdapter, BookAnalysisRepository],
-      useFactory: (
-        formalProfiles: CatalogBookReadingProfileAdapter,
-        source: BookAnalysisSourceAdapter,
-        repository: BookAnalysisRepository,
-      ) => new BookReadingProfileAccessService(
-        formalProfiles,
-        source,
-        source,
-        repository,
-        BOOK_ANALYSIS_STRATEGY_VERSION,
-      ),
-    },
-    {
       provide: BookAnalysisWorker,
       inject: [BookAnalysisRepository, ClassifyBookUseCase],
       useFactory: (
@@ -185,7 +168,7 @@ export { BOOK_ANALYSIS_STRATEGY_VERSION } from "./book-analysis.config";
       ) => new ApplyBookAnalysisCandidateUseCase(profiles, source, repository),
     },
   ],
-  exports: [BookReadingProfileAccessService, BOOK_ANALYSIS_SUMMARY_QUERY_PORT],
+  exports: [BOOK_ANALYSIS_SUMMARY_QUERY_PORT],
 })
 export class BookAnalysisModule {}
 

@@ -3,12 +3,12 @@ import { flushPromises } from '@vue/test-utils';
 import { expect, it, vi } from 'vitest';
 const mocks = vi.hoisted(() => ({ getSession: vi.fn(), clearCache: vi.fn() }));
 vi.mock('../features/auth/api/authApi', () => ({ getSession: mocks.getSession, loginRemote: vi.fn(), registerRemote: vi.fn(), resetPasswordApi: vi.fn(), logoutApi: vi.fn() }));
-vi.mock('../services/bookFileCache', () => ({ clearBookFileCacheForUser: mocks.clearCache }));
+vi.mock('../features/reader/web/bookFileCache', () => ({ clearBookFileCacheForUser: mocks.clearCache }));
 it('retries unavailable startup without clearing files, retains an active session offline, and synchronizes tabs', async () => {
   const values = new Map<string,string>();
   vi.stubGlobal('localStorage', { getItem: (key: string) => values.get(key) ?? null, setItem: (key: string, value: string) => values.set(key,value), removeItem: (key: string) => values.delete(key) });
   mocks.getSession.mockRejectedValueOnce(new Error('offline'));
-  const { useAuth } = await import('../composables/useAuth');
+  const { useAuth } = await import('../features/auth/web/useAuth');
   const auth = useAuth();
   expect(auth.sessionStatus.value).toBe('checking');
   await flushPromises();
@@ -21,7 +21,7 @@ it('retries unavailable startup without clearing files, retains an active sessio
   await auth.checkSession();
   expect(auth.isAuthenticated.value).toBe(true);
   expect(mocks.clearCache).not.toHaveBeenCalled();
-  const { SESSION_EVENT_KEY } = await import('../services/apiClient');
+  const { SESSION_EVENT_KEY } = await import('../shared/web/apiClient');
   const marker = JSON.stringify({ kind: 'cleared', id: 'logout' });
   localStorage.setItem(SESSION_EVENT_KEY, marker);
   window.dispatchEvent(new StorageEvent('storage', { key: SESSION_EVENT_KEY, newValue: marker }));

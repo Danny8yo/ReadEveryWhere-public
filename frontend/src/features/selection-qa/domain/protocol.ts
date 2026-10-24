@@ -89,7 +89,7 @@ export function reduceEvent(
   event: QaEvent,
 ): "applied" | "duplicate" | "gap" {
   if (
-    event.schemaVersion !== 1 ||
+    ![1, 2].includes(event.schemaVersion) ||
     event.turnId !== turn.id ||
     !Number.isSafeInteger(event.sequence) ||
     event.sequence < 1
@@ -100,6 +100,8 @@ export function reduceEvent(
     throw new Error("终态问答不能继续接收新事件。");
   if (event.sequence !== turn.lastSequence + 1) return "gap";
   const data = event.data;
+  if ((event.kind === "answer_delta" || event.kind === "citation") && event.schemaVersion === 2 &&
+      data.answerVersion !== turn.answerVersion) throw new Error("答案版本不匹配。");
   if (event.kind === "answer_delta") {
     if (typeof data.text !== "string") throw new Error("问答文本事件无效。");
     turn.answer += data.text;
@@ -116,6 +118,18 @@ export function reduceEvent(
   } else if (event.kind === "status") {
     if (data.status !== "queued" && data.status !== "running")
       throw new Error("问答状态事件无效。");
+    if (data.operation === "answer_version") {
+      if (data.state !== "started" || data.answerVersion !== (turn.answerVersion ?? 0) + 1) throw new Error("答案版本切换无效。");
+      turn.answerVersion = Number(data.answerVersion);
+      turn.answer = "";
+      turn.citations = [];
+      delete turn.quality;
+    }
+    if (data.operation === "quality_check" && data.state === "completed") {
+      const judgment = data.judgment as Turn["quality"];
+      if (!judgment || judgment.answerVersion !== turn.answerVersion || !["pass", "revise", "insufficient"].includes(judgment.verdict)) throw new Error("答案检查事件无效。");
+      turn.quality = judgment;
+    }
     turn.status = data.status;
     if (typeof data.phase === "string") {
       turn.phase = data.phase;
@@ -125,6 +139,13 @@ export function reduceEvent(
       }
     }
   } else if (event.kind === "terminal") {
+    if (turn.answerVersion !== undefined && event.schemaVersion === 2) {
+      if (data.answerVersion !== turn.answerVersion) throw new Error("终态答案版本不匹配。");
+      const judgment = data.quality as Turn["quality"];
+      if (judgment && judgment.answerVersion !== turn.answerVersion) throw new Error("终态检查版本不匹配。");
+      if (data.status === "completed" && judgment?.verdict !== "pass") throw new Error("回答尚未通过质量检查。");
+      if (judgment) turn.quality = judgment;
+    }
     if (
       !["completed", "cancelled", "failed", "timed_out"].includes(
         String(data.status),

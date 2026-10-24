@@ -11,8 +11,11 @@ import { KEYWORD_INDEX_SCHEMA } from "./schema-index";
 import { KEYWORD_INDEX_FILES_SCHEMA } from "./schema-index-files";
 import { SELECTION_QA_REPAIR_BUDGET_SCHEMA } from "./schema-selection-qa-repair-budget";
 import { SELECTION_QA_HISTORY_SCHEMA } from "./schema-selection-qa-history";
+import { SELECTION_QA_AUTONOMY_SCHEMA } from "./schema-selection-qa-autonomy";
+import { SELECTION_QA_QUALITY_SCHEMA } from "./schema-selection-qa-quality";
+import { KEYWORD_INDEX_DUAL_FORMAT_SCHEMA } from "./schema-index-dual-format";
 
-const migrations = [BASELINE_SCHEMA, SELECTION_QA_SCHEMA, KEYWORD_INDEX_SCHEMA, SELECTION_QA_RUNTIME_SCHEMA, KEYWORD_INDEX_FILES_SCHEMA, SELECTION_QA_REPAIR_BUDGET_SCHEMA, AUTH_SESSIONS_SCHEMA, SELECTION_QA_HISTORY_SCHEMA];
+const migrations = [BASELINE_SCHEMA, SELECTION_QA_SCHEMA, KEYWORD_INDEX_SCHEMA, SELECTION_QA_RUNTIME_SCHEMA, KEYWORD_INDEX_FILES_SCHEMA, SELECTION_QA_REPAIR_BUDGET_SCHEMA, AUTH_SESSIONS_SCHEMA, SELECTION_QA_HISTORY_SCHEMA, SELECTION_QA_AUTONOMY_SCHEMA, SELECTION_QA_QUALITY_SCHEMA, KEYWORD_INDEX_DUAL_FORMAT_SCHEMA];
 // Explicitly recognized historical extension. Only applied to in-memory reference
 // schemas: existing columns, values and uniqueness constraints are preserved.
 const historicalSourceChecksum = `

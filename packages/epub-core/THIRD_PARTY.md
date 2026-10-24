@@ -10,7 +10,7 @@ P1当前SHA-256：
 
 - `src/foliate/epub.js`：`c36225cf0f29296edf9387169b371ead0fcb6c3480b0ff9935e3c5cdc40aac3a`
 - `src/foliate/epubcfi.js`：`e1a688ad5c84bf31f33cef467f92c7a6d060a0f17ec37c1d3c048e9c7b1cf645`（原CFI算法未改）
-- 浏览器宿主 `frontend/src/lib/foliate-js/view.js`：`05e070a83479ca11a44c6876ce6e0b2363a55905c4a8a7980df50922d623038d`
+- 浏览器宿主 `frontend/src/vendor/foliate-js/view.js`：`05e070a83479ca11a44c6876ce6e0b2363a55905c4a8a7980df50922d623038d`
 
 ## 本地补丁
 
@@ -20,6 +20,6 @@ P1当前SHA-256：
 - transform hook后仅当输出为字符串且XML/HTML类媒体类型时声明Blob实际UTF8；原始bytes/Blob声明保留。覆盖Windows1252 XML声明序列化后重解析，不能只测内存字符串。
 - Web受控imports直接指向共享包；分页/overlayer/PDF/MOBI保持原浏览器源码。
 
-Node生产依赖固定jsdom26.1.0（MIT）及adm-zip0.6.0（MIT），由lockfile固定。adm-zip0.6.0修复旧版恶意ZIP大分配问题；当前audit仍提示文件系统extract的symlink问题，本包只读内存、从不extract/write到文件系统。浏览器门槛使用前端Playwright，未引入生产浏览器进程。
+Node生产依赖固定jsdom26.1.0（MIT）及adm-zip0.6.1（MIT），由lockfile固定。adm-zip0.6.1修复旧版恶意ZIP大分配问题，并在条目声明解压大小为0时仍限制解压输出（GHSA-rcw4-f5rp-g42v）；当前audit仍提示文件系统extract的symlink问题，本包只读内存、从不extract/write到文件系统。浏览器门槛使用前端Playwright，未引入生产浏览器进程。
 
 每次调整引擎/解码需重跑真实ZIP、跨宿主/渲染变换与旧CFI门槛；比较报告记录当次实际hash。

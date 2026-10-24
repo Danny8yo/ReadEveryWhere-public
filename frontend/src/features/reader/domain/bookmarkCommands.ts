@@ -1,8 +1,10 @@
-import type { Bookmark } from '../../../lib/reader/bookmarks';
+import type { Bookmark } from '../model/bookmark';
 import type { BookmarkRecord, CreateBookmarkParams } from '../model/bookmark';
 import { errorMessage } from '../../../shared/domain/errors';
 export const toBookmark = (record: BookmarkRecord): Bookmark => ({ id: String(record.id), cfi: record.location, fraction: record.fraction, chapterLabel: record.chapterLabel ?? undefined });
 export const createBookmarkState = () => ({ bookmarks: [] as Bookmark[], syncStatus: 'idle' as 'idle' | 'syncing' | 'synced' | 'failed', error: null as string | null });
+// 书签已在其他设备删除（或网络重试）时服务器回复"书签不存在"，目标状态已达成。
+const isBookmarkNotFound = (cause: unknown) => typeof cause === 'object' && cause !== null && 'code' in cause && cause.code === 40401;
 export function createBookmarkController(state: ReturnType<typeof createBookmarkState>, api: {
     create(input: CreateBookmarkParams): Promise<BookmarkRecord>;
     delete(id: number): Promise<{
@@ -23,10 +25,15 @@ export function createBookmarkController(state: ReturnType<typeof createBookmark
             state.syncStatus = 'synced';
         }
         catch (cause) {
-            if (!disposed) {
-                state.syncStatus = 'failed';
-                state.error = errorMessage(cause);
+            if (disposed)
+                return;
+            if (isBookmarkNotFound(cause)) {
+                state.bookmarks = state.bookmarks.filter(bookmark => bookmark.id !== id);
+                state.syncStatus = 'synced';
+                return;
             }
+            state.syncStatus = 'failed';
+            state.error = errorMessage(cause);
         }
     }
     async function toggle(input: CreateBookmarkParams) {

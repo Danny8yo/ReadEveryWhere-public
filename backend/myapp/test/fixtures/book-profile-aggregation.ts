@@ -1,5 +1,4 @@
 import type { BookReadingProfileCandidateJSON } from "../../src/modules/intelligent-library/book-analysis/domain/book-reading-profile-candidate";
-import type { TrustedBookAnalysisContext } from "../../src/modules/ai-reading/domain";
 
 export const LEGACY_PROFILE_REVISION = {
   fileChecksum: "sha256:current",
@@ -56,17 +55,3 @@ export const LEGACY_MULTI_PROFILE_FIXTURE: BookReadingProfileCandidateJSON[] = [
     analyzedAt: "2026-08-27T02:00:00.000Z",
   },
 ];
-
-export const LEGACY_AI_READING_PROFILE_SNAPSHOT: TrustedBookAnalysisContext = {
-  profileId: "profile-current-latest",
-  primaryGenre: "argumentation",
-  secondaryGenres: ["popular-science"],
-  traits: ["claim-driven", "evidence-heavy"],
-  confidence: 0.93,
-  classificationSummary: "The latest valid profile.",
-  contentRevision: { ...LEGACY_PROFILE_REVISION },
-  modelId: "deepseek-v4-flash",
-  strategyVersion: "book-profile-v1",
-  analyzedAt: "2026-08-27T02:00:00.000Z",
-  spoilerPolicy: "avoid_unless_user_requests",
-};

@@ -11,6 +11,8 @@ export type AnnotationTarget =
 export interface ApplyAnnotationInput {
   commandId: string;
   appendText: string;
+  answerVersion?: number;
+  acceptUnverified?: boolean;
   target: AnnotationTarget;
 }
 export interface AnnotationApplicationResult {

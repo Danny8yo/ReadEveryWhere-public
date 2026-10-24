@@ -78,7 +78,7 @@ test('FTS5 is usable in an isolated in-memory database', () => {
 })
 
 test('existing Foliate literal search preserves both repeated hits and offsets', async () => {
-    const { search } = await import('../../../frontend/src/lib/foliate-js/search.js')
+    const { search } = await import('../../../frontend/src/vendor/foliate-js/search.js')
     const results = [...search(['重复句子。', '重复句子。'], '重复句子', { granularity: 'grapheme' })]
     assert.deepEqual(results.map(r => r.range), [
         { startIndex: 0, startOffset: 0, endIndex: 0, endOffset: 4 },

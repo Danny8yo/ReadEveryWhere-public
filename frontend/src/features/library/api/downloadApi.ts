@@ -1,6 +1,6 @@
 import type { DownloadTask } from '../model/download';
 import type { CreateDownloadTaskParams } from '../model/download';
-import { request } from '../../../services/apiClient';
+import { request } from '../../../shared/web/apiClient';
 export const downloadApi = {
     createTask(params: CreateDownloadTaskParams): Promise<DownloadTask> {
         return request<DownloadTask>('/api/v1/downloads/tasks', {

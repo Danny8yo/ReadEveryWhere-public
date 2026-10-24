@@ -868,7 +868,17 @@ class Loader {
             for (const el of doc.querySelectorAll('[style]'))
                 el.setAttribute('style',
                     await this.replaceCSS(el.getAttribute('style'), href, parents))
-            // TODO: replace inline scripts? probably not worth the trouble
+            // Book content is untrusted. The page CSP is inherited by these blob:
+            // documents, but browsers that do not inherit it would still run book
+            // scripts in the reader origin (the iframe sandbox needs allow-scripts
+            // and allow-same-origin), so forbid scripts inside the document too.
+            const head = doc.querySelector('head')
+            if (head) {
+                const csp = doc.createElementNS(NS.XHTML, 'meta')
+                csp.setAttribute('http-equiv', 'Content-Security-Policy')
+                csp.setAttribute('content', "script-src 'none'")
+                head.prepend(csp)
+            }
             const result = new XMLSerializer().serializeToString(doc)
             return this.createURL(href, result, effectiveMediaType, parent)
         }
